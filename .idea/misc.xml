@@ -5,6 +5,7 @@
     <option name="originalFiles">
       <list>
         <option value="$PROJECT_DIR$/catalog/pom.xml" />
+        <option value="$PROJECT_DIR$/carrito/pom.xml" />
       </list>
     </option>
   </component>
