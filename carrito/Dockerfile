@@ -9,6 +9,9 @@ COPY pom.xml ./
 COPY .mvn .mvn
 COPY mvnw ./
 
+# Otorgamos permisos de ejecución al Maven Wrapper por seguridad
+RUN chmod +x mvnw
+
 # Descargamos dependencias en caché para optimizar tiempos
 RUN ./mvnw dependency:go-offline -B
 
@@ -22,11 +25,9 @@ RUN ./mvnw clean package -DskipTests
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# Creamos un usuario de sistema sin privilegios por seguridad
 RUN addgroup -S spring && adduser -S spring -G spring
 USER spring:spring
 
-# Copiamos el JAR compilado desde la etapa anterior
 COPY --from=builder /app/target/*.jar app.jar
 
 EXPOSE 8080
