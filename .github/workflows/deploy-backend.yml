@@ -1,0 +1,65 @@
+name: Construir y Desplegar Backend
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: us-east-1
+  CATALOG_REPO: camisetas360-catalog
+  CARRITO_REPO: camisetas360-carrito
+
+jobs:
+  build-and-deploy-backend:
+    name: Build, Push and Deploy Backend Services
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Iniciar sesión en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Construir y empujar imagen de Catalog
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$CATALOG_REPO:latest -t $ECR_REGISTRY/$CATALOG_REPO:$IMAGE_TAG ./catalog
+          docker push $ECR_REGISTRY/$CATALOG_REPO -a
+
+      - name: Construir y empujar imagen de Carrito
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$CARRITO_REPO:latest -t $ECR_REGISTRY/$CARRITO_REPO:$IMAGE_TAG ./carrito
+          docker push $ECR_REGISTRY/$CARRITO_REPO -a
+
+      - name: Desplegar en EC2 vía AWS SSM con Docker Compose
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_BACKEND_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Desplegar microservicios backend con Docker Compose" \
+            --parameters '{"commands":[
+              "aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin $ECR_REGISTRY",
+              "cd /home/ec2-user/camisetas360-backend || git clone https://github.com/beogonzalez/camisetas360-backend.git /home/ec2-user/camisetas360-backend && cd /home/ec2-user/camisetas360-backend",
+              "git pull origin main",
+              "sudo docker compose pull",
+              "sudo docker compose up -d --remove-orphans",
+              "sudo docker image prune -a -f"
+            ]}'
