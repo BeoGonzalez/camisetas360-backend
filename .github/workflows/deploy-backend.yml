@@ -46,7 +46,7 @@ jobs:
         run: |
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:Name,Values=tu-instancia-ec2" \
+            --targets "Key=tag:Name,Values=camisetas360-backend" \
             --parameters 'commands=[
               "cd /home/ec2-user/camisetas360",
               "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}",
