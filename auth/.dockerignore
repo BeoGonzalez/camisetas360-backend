@@ -1,0 +1,24 @@
+# Directorios de compilación de Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Archivos de Git
+.git/
+.gitignore
+
+# Archivos de configuración de IDEs (IntelliJ, Eclipse, VS Code)
+.idea/
+*.iml
+*.iws
+.project
+.classpath
+.settings/
+.vscode/
+
+# Archivos temporales y logs de Java
+*.log
+hs_err_pid*
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
