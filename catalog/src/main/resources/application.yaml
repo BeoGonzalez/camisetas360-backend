@@ -1,11 +1,10 @@
 server:
-  port: 8081 # El microservicio operará en este puerto de forma local
+  port: 8081
 
 spring:
   application:
     name: catalog-service
 
-  # Configuración de la base de datos en memoria H2
   datasource:
     url: jdbc:h2:mem:camisetasdb
     driverClassName: org.h2.Driver
@@ -19,14 +18,17 @@ spring:
       settings:
         web-allow-others: true
 
-  # Configuración de JPA e Hibernate
   jpa:
     database-platform: org.hibernate.dialect.H2Dialect
     hibernate:
-      ddl-auto: update # Genera las tablas automáticamente a partir de la entidad Product
-    show-sql: true # Imprime las consultas en la terminal
+      ddl-auto: update
+    show-sql: true
+    defer-datasource-initialization: true # Fundamental para que el script corra después de crear las tablas
 
-  # Configuración de seguridad BFF para validación de tokens de Azure Entra ID
+  sql:
+    init:
+      mode: always # Fuerza la lectura del data.sql al iniciar
+
   security:
     oauth2:
       resourceserver:

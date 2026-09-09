@@ -1,0 +1,3 @@
+INSERT INTO products (sku, name, category, price, stock, description) VALUES ('CAM-001', 'Camiseta Titular 2026', 'Fútbol', 39.99, 100, 'Camiseta oficial de local para la temporada');
+INSERT INTO products (sku, name, category, price, stock, description) VALUES ('CAM-002', 'Camiseta Visitante 2026', 'Fútbol', 39.99, 80, 'Camiseta alternativa de visitante');
+INSERT INTO products (sku, name, category, price, stock, description) VALUES ('CAM-003', 'Camiseta Retro Edición Especial', 'Colección', 49.99, 25, 'Diseño clásico conmemorativo');
