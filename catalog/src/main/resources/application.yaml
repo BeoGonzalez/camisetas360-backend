@@ -32,4 +32,4 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: https://login.microsoftonline.com/
-          tenant-id: <TU-TENANT-ID>
+          tenant-id: e5372bf0-c5e3-4286-887c-79069f209c1f
