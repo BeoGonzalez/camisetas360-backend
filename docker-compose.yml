@@ -1,4 +1,17 @@
 services:
+  auth:
+    image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/camisetas360-auth:latest
+    container_name: app-auth
+    restart: unless-stopped
+    ports:
+      - "83:83"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - spring.security.oauth2.resourceserver.jwt.issuer-uri=https://login.microsoftonline.com/
+      - spring.security.oauth2.resourceserver.jwt.tenant-id=<TU-TENANT-ID>
+    networks:
+      - app-network
+
   catalog:
     image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/camisetas360-catalog:latest
     container_name: app-catalog
@@ -7,6 +20,8 @@ services:
       - "8082:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
+      - spring.security.oauth2.resourceserver.jwt.issuer-uri=https://login.microsoftonline.com/
+      - spring.security.oauth2.resourceserver.jwt.tenant-id=<TU-TENANT-ID>
     networks:
       - app-network
 
@@ -18,6 +33,8 @@ services:
       - "8081:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
+      - spring.security.oauth2.resourceserver.jwt.issuer-uri=https://login.microsoftonline.com/
+      - spring.security.oauth2.resourceserver.jwt.tenant-id=<TU-TENANT-ID>
     networks:
       - app-network
 

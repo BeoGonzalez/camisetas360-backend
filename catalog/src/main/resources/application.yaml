@@ -31,6 +31,5 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          # Reemplaza TU_TENANT_ID con el ID de tu directorio en Azure
-          issuer-uri: https://login.microsoftonline.com/TU_TENANT_ID/v2.0
-          jwk-set-uri: https://login.microsoftonline.com/TU_TENANT_ID/discovery/v2.0/keys
+          issuer-uri: https://login.microsoftonline.com/
+          tenant-id: <TU-TENANT-ID>
