@@ -1,4 +1,4 @@
-package com.camisetas360.carrito.controllers;
+package com.camisetas360.carrito.controller;
 
 import com.camisetas360.carrito.dtos.OrderRequestDTO;
 import com.camisetas360.carrito.dtos.OrderResponseDTO;
