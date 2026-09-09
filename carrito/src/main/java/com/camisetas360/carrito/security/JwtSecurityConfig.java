@@ -33,7 +33,7 @@ public class JwtSecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOriginPatterns(Arrays.asList(
-                "http://44.200.56.103:*", "https://44.200.56.103:*",
+                "http://100.49.172.129:*", "https://100.49.172.129:*",
                 "http://100.49.172.129:*", "https://100.49.172.129:*",
                 "https://nkkc0jiwzk.execute-api.us-east-1.amazonaws.com",
                 "http://localhost:*"
