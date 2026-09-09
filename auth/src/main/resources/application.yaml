@@ -1,5 +1,5 @@
 server:
-  port: 83 # El microservicio operará en este puerto de forma local
+  port: 8083 # El microservicio operará en este puerto de forma local
 
 spring:
   application:
