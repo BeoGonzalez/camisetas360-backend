@@ -1,4 +1,11 @@
+server:
+  port: 83 # El microservicio operará en este puerto de forma local
+
 spring:
+  application:
+    name: auth-service
+
+  # Configuración de seguridad para validación de tokens de Azure Entra ID
   security:
     oauth2:
       resourceserver:
