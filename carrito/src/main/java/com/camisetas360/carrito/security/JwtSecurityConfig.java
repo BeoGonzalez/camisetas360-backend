@@ -1,15 +1,11 @@
 package com.camisetas360.carrito.security;
 
-import java.util.Arrays;
-
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.CorsConfigurationSource;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
 public class JwtSecurityConfig {
@@ -18,72 +14,40 @@ public class JwtSecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
         http
+                // API REST con JWT: no usamos CSRF
                 .csrf(csrf -> csrf.disable())
 
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                // CORS lo administra AWS API Gateway
+                .cors(cors -> cors.disable())
 
-                .authorizeHttpRequests(authz -> authz
+                // API completamente stateless
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(
+                                SessionCreationPolicy.STATELESS
+                        )
+                )
 
-                        // IMPORTANTE:
-                        // El preflight CORS no lleva JWT.
+                .authorizeHttpRequests(auth -> auth
+
+                        // El preflight OPTIONS nunca debe exigir JWT
                         .requestMatchers(HttpMethod.OPTIONS, "/**")
                         .permitAll()
 
-                        // Las operaciones reales del carrito sí requieren scope
+                        // Checkout y operaciones del carrito protegidas
                         .requestMatchers("/api/v1/carrito/**")
                         .hasAuthority("SCOPE_Cart.Write")
 
+                        // Cualquier otra ruta requiere autenticación
                         .anyRequest()
                         .authenticated()
                 )
 
-                .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> {
+                // Microsoft Entra ID / OAuth2 JWT
+                .oauth2ResourceServer(oauth2 ->
+                        oauth2.jwt(jwt -> {
                         })
                 );
 
         return http.build();
-    }
-
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-
-        CorsConfiguration configuration = new CorsConfiguration();
-
-        // Orígenes permitidos
-        configuration.setAllowedOrigins(Arrays.asList(
-                "https://100.49.172.129",
-                "http://localhost:4200"
-        ));
-
-        // Métodos permitidos
-        configuration.setAllowedMethods(Arrays.asList(
-                "GET",
-                "POST",
-                "PUT",
-                "PATCH",
-                "DELETE",
-                "OPTIONS"
-        ));
-
-        // Headers que usa Angular
-        configuration.setAllowedHeaders(Arrays.asList(
-                "Authorization",
-                "Content-Type",
-                "Accept"
-        ));
-
-        // Usas Bearer Token, no cookies cross-origin
-        configuration.setAllowCredentials(false);
-
-        // Cache del preflight
-        configuration.setMaxAge(3600L);
-
-        UrlBasedCorsConfigurationSource source =
-                new UrlBasedCorsConfigurationSource();
-
-        source.registerCorsConfiguration("/**", configuration);
-
-        return source;
     }
 }
