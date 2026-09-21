@@ -1,8 +1,9 @@
 package com.camisetas360.carrito.controller;
 
+import com.camisetas360.carrito.dtos.CheckoutResponseDTO;
 import com.camisetas360.carrito.dtos.OrderRequestDTO;
-import com.camisetas360.carrito.dtos.OrderResponseDTO;
 import com.camisetas360.carrito.service.CartService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,8 +18,11 @@ public class CartController {
     }
 
     @PostMapping("/checkout")
-    public ResponseEntity<OrderResponseDTO> checkout(@RequestBody OrderRequestDTO request) {
-        OrderResponseDTO response = cartService.createOrder(request);
-        return ResponseEntity.ok(response);
+    public ResponseEntity<CheckoutResponseDTO> checkout(
+            @Valid @RequestBody OrderRequestDTO request
+    ) {
+        CheckoutResponseDTO response = cartService.createOrder(request);
+
+        return ResponseEntity.accepted().body(response);
     }
 }

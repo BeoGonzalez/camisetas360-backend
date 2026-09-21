@@ -1,7 +1,14 @@
 package com.camisetas360.carrito.dtos;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotEmpty;
+
 import java.util.List;
 
 public record OrderRequestDTO(
-        List<OrderItemDTO> items
-) {}
+
+        @NotEmpty
+        List<@Valid OrderItemDTO> items
+
+) {
+}

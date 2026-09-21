@@ -1,4 +1,4 @@
-package com.camisetas360.carrito.security;
+package com.camisetas360.orders.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,7 +16,6 @@ public class JwtSecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
 
-                // CORS administrado externamente
                 .cors(cors -> cors.disable())
 
                 .sessionManagement(session ->
@@ -31,15 +30,12 @@ public class JwtSecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**")
                         .permitAll()
 
-                        // Checkout requiere permiso de escritura
+                        // Las órdenes solo podrán consultarse
+                        // por usuarios autenticados.
                         .requestMatchers(
-                                HttpMethod.POST,
-                                "/api/v1/carrito/checkout"
+                                HttpMethod.GET,
+                                "/api/v1/orders/**"
                         )
-                        .hasAuthority("SCOPE_Cart.Write")
-
-                        // Cualquier otro endpoint del carrito
-                        .requestMatchers("/api/v1/carrito/**")
                         .authenticated()
 
                         .anyRequest()
