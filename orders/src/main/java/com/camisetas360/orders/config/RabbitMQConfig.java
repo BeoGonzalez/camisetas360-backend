@@ -49,4 +49,9 @@ public class RabbitMQConfig {
                 .to(ordersExchange)
                 .with(CHECKOUT_REQUESTED_ROUTING_KEY);
     }
+
+    @Bean
+    public MessageConverter jsonMessageConverter() {
+        return new JacksonJsonMessageConverter();
+    }
 }

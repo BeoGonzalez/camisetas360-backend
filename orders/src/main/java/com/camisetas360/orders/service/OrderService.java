@@ -1,5 +1,8 @@
 package com.camisetas360.orders.service;
 
+import com.camisetas360.orders.dto.OrderItemResponseDTO;
+import com.camisetas360.orders.dto.OrderResponseDTO;
+import com.camisetas360.orders.exception.OrderNotFoundException;
 import com.camisetas360.orders.messaging.OrderEventPublisher;
 import com.camisetas360.orders.messaging.event.CheckoutRequestedEvent;
 import com.camisetas360.orders.messaging.event.OrderCreatedEvent;
@@ -82,4 +85,48 @@ public class OrderService {
 
         return savedOrder;
     }
+
+    public OrderResponseDTO findById(Long orderId, String userEmail) {
+
+    Order order = orderRepository.findById(orderId)
+        .orElseThrow(() ->
+                new OrderNotFoundException(orderId)
+        );
+
+    if (!order.getUserEmail().equalsIgnoreCase(userEmail)) {
+    throw new OrderNotFoundException(orderId);
+}
+
+    return toResponse(order);
+}
+
+public List<OrderResponseDTO> findByUserEmail(String userEmail) {
+
+    return orderRepository
+            .findByUserEmailOrderByCreatedAtDesc(userEmail)
+            .stream()
+            .map(this::toResponse)
+            .toList();
+}
+
+private OrderResponseDTO toResponse(Order order) {
+
+    List<OrderItemResponseDTO> items = order.getItems()
+            .stream()
+            .map(item -> new OrderItemResponseDTO(
+                    item.getSku(),
+                    item.getQuantity(),
+                    item.getUnitPrice()
+            ))
+            .toList();
+
+    return new OrderResponseDTO(
+            order.getId(),
+            order.getUserEmail(),
+            order.getTotalAmount(),
+            order.getStatus(),
+            order.getCreatedAt(),
+            items
+    );
+}
 }

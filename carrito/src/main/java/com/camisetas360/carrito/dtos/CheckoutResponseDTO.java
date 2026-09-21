@@ -1,8 +1,11 @@
 package com.camisetas360.carrito.dtos;
 
-public record OrderResponseDTO(
-        Long orderId,
+import java.util.UUID;
+
+public record CheckoutResponseDTO(
+        UUID requestId,
         String userEmail,
         Double totalAmount,
         String status
-) {}
+) {
+}
