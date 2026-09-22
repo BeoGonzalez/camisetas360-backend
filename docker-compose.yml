@@ -1,42 +1,130 @@
+name: camisetas360-local
+
+x-rabbitmq-environment: &rabbitmq-environment
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: 5672
+  RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-camisetas360}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-camisetas360_dev}
+  RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/camisetas360}
+
+x-resource-server-environment: &resource-server-environment
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: ${ENTRA_ISSUER_URI:-https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_AUDIENCES: ${ENTRA_AUDIENCE:-719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
+
 services:
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: camisetas360-rabbitmq
+    hostname: rabbitmq
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-camisetas360}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-camisetas360_dev}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/camisetas360}
+
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+    networks:
+      - app-network
+
+
   auth:
-    image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/camisetas360-auth:latest
+    build: ./auth
     container_name: app-auth
     restart: unless-stopped
+
     ports:
-      - "83:83"
+      - "127.0.0.1:8083:8080"
+
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - spring.security.oauth2.resourceserver.jwt.issuer-uri=https://login.microsoftonline.com/
-      - spring.security.oauth2.resourceserver.jwt.tenant-id=${TENANT_ID}
+      <<: *resource-server-environment
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: local
+
     networks:
       - app-network
+
 
   catalog:
-    image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/camisetas360-catalog:latest
+    build: ./catalog
     container_name: app-catalog
     restart: unless-stopped
+
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8081:8080"
+
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - spring.security.oauth2.resourceserver.jwt.issuer-uri=https://login.microsoftonline.com/
-      - spring.security.oauth2.resourceserver.jwt.tenant-id=${TENANT_ID}
+      <<: [*rabbitmq-environment, *resource-server-environment]
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: local
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
     networks:
       - app-network
 
+
   carrito:
-    image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/camisetas360-carrito:latest
+    build: ./carrito
     container_name: app-carrito
     restart: unless-stopped
+
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8082:8080"
+
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - spring.security.oauth2.resourceserver.jwt.issuer-uri=https://login.microsoftonline.com/
-      - spring.security.oauth2.resourceserver.jwt.tenant-id=${TENANT_ID}
+      <<: [*rabbitmq-environment, *resource-server-environment]
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: local
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
     networks:
       - app-network
+
+
+  orders:
+    build: ./orders
+    container_name: app-orders
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8084:8080"
+
+    environment:
+      <<: [*rabbitmq-environment, *resource-server-environment]
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: local
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+    networks:
+      - app-network
+
+
+volumes:
+  rabbitmq-data:
+
 
 networks:
   app-network:
