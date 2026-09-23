@@ -9,9 +9,9 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0
+          issuer-uri: ${ENTRA_ISSUER_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
           audiences:
-            - 719c999d-0f57-4ad5-9bd9-a72be5ca07e0
+            - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
 
 management:
   endpoints:
@@ -22,3 +22,8 @@ management:
   endpoint:
     health:
       show-details: never
+
+app:
+  cors:
+    allowed-origin-patterns:
+      - ${CORS_ALLOWED_ORIGIN:http://localhost:*}
