@@ -7,7 +7,7 @@ spring:
 
   datasource:
     url: jdbc:h2:mem:camisetasdb
-    driverClassName: org.h2.Driver
+    driver-class-name: org.h2.Driver
     username: sa
     password:
 
@@ -19,19 +19,25 @@ spring:
         web-allow-others: true
 
   jpa:
-    database-platform: org.hibernate.dialect.H2Dialect
     hibernate:
       ddl-auto: update
     show-sql: true
-    defer-datasource-initialization: true # Fundamental para que el script corra después de crear las tablas
+    open-in-view: false
+    defer-datasource-initialization: true
 
   sql:
     init:
-      mode: always # Fuerza la lectura del data.sql al iniciar
+      mode: always
 
   security:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: https://login.microsoftonline.com/
-          tenant-id: e5372bf0-c5e3-4286-887c-79069f209c1f
+          issuer-uri: ${ENTRA_ISSUER_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
+          audiences:
+            - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
+
+app:
+  cors:
+    allowed-origin-patterns:
+      - ${CORS_ALLOWED_ORIGIN:http://localhost:*}

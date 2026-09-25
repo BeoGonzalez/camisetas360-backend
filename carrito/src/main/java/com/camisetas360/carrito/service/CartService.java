@@ -1,7 +1,7 @@
 package com.camisetas360.carrito.service;
 
-import com.camisetas360.carrito.dtos.OrderRequestDTO;
 import com.camisetas360.carrito.dtos.CheckoutResponseDTO;
+import com.camisetas360.carrito.dtos.OrderRequestDTO;
 import com.camisetas360.carrito.messaging.CheckoutEventPublisher;
 import com.camisetas360.carrito.messaging.event.CheckoutItemEvent;
 import com.camisetas360.carrito.messaging.event.CheckoutRequestedEvent;
@@ -16,54 +16,50 @@ import java.util.UUID;
 @Service
 public class CartService {
 
-    private final CheckoutEventPublisher checkoutEventPublisher;
+        private final CheckoutEventPublisher checkoutEventPublisher;
 
-    public CartService(CheckoutEventPublisher checkoutEventPublisher) {
-        this.checkoutEventPublisher = checkoutEventPublisher;
-    }
+        public CartService(CheckoutEventPublisher checkoutEventPublisher) {
+                this.checkoutEventPublisher = checkoutEventPublisher;
+        }
 
-    public CheckoutResponseDTO createOrder(OrderRequestDTO request) {
+        public CheckoutResponseDTO createOrder(OrderRequestDTO request) {
 
-        Jwt jwt = (Jwt) SecurityContextHolder
-                .getContext()
-                .getAuthentication()
-                .getPrincipal();
+                Jwt jwt = (Jwt) SecurityContextHolder
+                                .getContext()
+                                .getAuthentication()
+                                .getPrincipal();
 
-        String userEmail =
-                jwt.getClaimAsString("preferred_username");
+                String userEmail = jwt.getClaimAsString("preferred_username");
 
-        List<CheckoutItemEvent> items = request.items()
-                .stream()
-                .map(item -> new CheckoutItemEvent(
-                        item.sku(),
-                        item.quantity(),
-                        item.unitPrice()
-                ))
-                .toList();
+                if (userEmail == null || userEmail.isBlank()) {
+                        throw new IllegalStateException(
+                                        "El token JWT no contiene el claim preferred_username");
+                }
 
-        CheckoutRequestedEvent event =
-                new CheckoutRequestedEvent(
-                        UUID.randomUUID(),
-                        userEmail != null
-                                ? userEmail
-                                : "usuario_desconocido",
-                        items,
-                        Instant.now()
-                );
+                List<CheckoutItemEvent> items = request.items()
+                                .stream()
+                                .map(item -> new CheckoutItemEvent(
+                                                item.sku(),
+                                                item.quantity(),
+                                                item.unitPrice()))
+                                .toList();
 
-        checkoutEventPublisher.publishCheckoutRequested(event);
+                CheckoutRequestedEvent event = new CheckoutRequestedEvent(
+                                UUID.randomUUID(),
+                                userEmail,
+                                items,
+                                Instant.now());
 
-        double total = items.stream()
-                .mapToDouble(item ->
-                        item.unitPrice() * item.quantity()
-                )
-                .sum();
+                checkoutEventPublisher.publishCheckoutRequested(event);
 
-        return new CheckoutResponseDTO(
-                event.eventId(),
-                event.userEmail(),
-                total,
-                "PROCESSING"
-        );
-    }
+                double total = items.stream()
+                                .mapToDouble(item -> item.unitPrice() * item.quantity())
+                                .sum();
+
+                return new CheckoutResponseDTO(
+                                event.eventId(),
+                                event.userEmail(),
+                                total,
+                                "PROCESSING");
+        }
 }

@@ -1,11 +1,11 @@
 name: camisetas360-local
 
 x-rabbitmq-environment: &rabbitmq-environment
-  RABBITMQ_HOST: rabbitmq
-  RABBITMQ_PORT: 5672
-  RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-camisetas360}
-  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-camisetas360_dev}
-  RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/camisetas360}
+  SPRING_RABBITMQ_HOST: rabbitmq
+  SPRING_RABBITMQ_PORT: 5672
+  SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-camisetas360}
+  SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-camisetas360_dev}
+  SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-/camisetas360}
 
 x-resource-server-environment: &resource-server-environment
   SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: ${ENTRA_ISSUER_URI:-https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
@@ -14,7 +14,7 @@ x-resource-server-environment: &resource-server-environment
 x-mail-environment: &mail-environment
   MAIL_USERNAME: ${MAIL_USERNAME}
   MAIL_PASSWORD: ${MAIL_PASSWORD}
-  MAIL_FROM: ${MAIL_FROM:-${MAIL_USERNAME}}
+  MAIL_FROM: ${MAIL_FROM}
 
 services:
 
@@ -48,7 +48,9 @@ services:
 
 
   auth:
-    build: ./auth
+    build:
+      context: ./auth
+
     container_name: app-auth
     restart: unless-stopped
 
@@ -57,15 +59,19 @@ services:
 
     environment:
       <<: *resource-server-environment
+
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
 
     networks:
       - app-network
 
 
   catalog:
-    build: ./catalog
+    build:
+      context: ./catalog
+
     container_name: app-catalog
     restart: unless-stopped
 
@@ -73,20 +79,20 @@ services:
       - "127.0.0.1:8081:8080"
 
     environment:
-      <<: [*rabbitmq-environment, *resource-server-environment]
+      <<: *resource-server-environment
+
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
-
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
 
     networks:
       - app-network
 
 
   carrito:
-    build: ./carrito
+    build:
+      context: ./carrito
+
     container_name: app-carrito
     restart: unless-stopped
 
@@ -95,6 +101,7 @@ services:
 
     environment:
       <<: [*rabbitmq-environment, *resource-server-environment]
+
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
 
@@ -107,7 +114,9 @@ services:
 
 
   orders:
-    build: ./orders
+    build:
+      context: ./orders
+
     container_name: app-orders
     restart: unless-stopped
 
@@ -116,6 +125,7 @@ services:
 
     environment:
       <<: [*rabbitmq-environment, *resource-server-environment]
+
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
 
@@ -128,7 +138,9 @@ services:
 
 
   notifications:
-    build: ./notifications
+    build:
+      context: ./notifications
+
     container_name: app-notifications
     restart: unless-stopped
 
@@ -136,7 +148,8 @@ services:
       - "127.0.0.1:8085:8080"
 
     environment:
-      <<: [*rabbitmq-environment, *mail-environment]
+      <<: [*rabbitmq-environment, *mail-environment, *resource-server-environment]
+
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
 

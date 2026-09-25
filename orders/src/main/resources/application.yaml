@@ -36,7 +36,8 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: ${ENTRA_ISSUER_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
-          jwk-set-uri: ${ENTRA_JWK_SET_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/discovery/v2.0/keys}
+          audiences:
+            - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
 
 logging:
   level:
