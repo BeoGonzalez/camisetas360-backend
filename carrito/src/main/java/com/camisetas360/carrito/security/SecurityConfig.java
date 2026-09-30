@@ -5,44 +5,79 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 
 @Configuration
 public class SecurityConfig {
 
-        @Bean
-        public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    @Bean
+    public JwtAuthenticationConverter jwtAuthenticationConverter() {
 
-                http
-                                .csrf(csrf -> csrf.disable())
+        JwtAuthenticationConverter converter =
+                new JwtAuthenticationConverter();
 
-                                // CORS administrado externamente
-                                .cors(cors -> cors.disable())
+        converter.setJwtGrantedAuthoritiesConverter(
+                new JwtAuthoritiesConverter()
+        );
 
-                                .sessionManagement(session -> session.sessionCreationPolicy(
-                                                SessionCreationPolicy.STATELESS))
+        return converter;
+    }
 
-                                .authorizeHttpRequests(auth -> auth
+    @Bean
+    public SecurityFilterChain filterChain(
+            HttpSecurity http,
+            JwtAuthenticationConverter jwtAuthenticationConverter
+    ) throws Exception {
 
-                                                // Preflight CORS
-                                                .requestMatchers(
-                                                                HttpMethod.OPTIONS,
-                                                                "/**")
-                                                .permitAll()
+        http
+                .csrf(csrf -> csrf.disable())
 
-                                                // Checkout requiere el scope específico
-                                                .requestMatchers(
-                                                                HttpMethod.POST,
-                                                                "/api/v1/carrito/checkout")
-                                                .hasAuthority("SCOPE_Checkout.Create")
+                // CORS administrado externamente
+                .cors(cors -> cors.disable())
 
-                                                // Todo lo demás queda bloqueado
-                                                .anyRequest()
-                                                .denyAll())
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(
+                                SessionCreationPolicy.STATELESS
+                        )
+                )
 
-                                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> {
-                                }));
+                .authorizeHttpRequests(auth -> auth
 
-                return http.build();
-        }
+                        // Preflight CORS
+                        .requestMatchers(
+                                HttpMethod.OPTIONS,
+                                "/**"
+                        )
+                        .permitAll()
+
+                        // Checkout:
+                        // requiere CUSTOMER + Checkout.Create
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/carrito/checkout"
+                        )
+                        .access(
+                                new WebExpressionAuthorizationManager(
+                                        "hasRole('CUSTOMER') " +
+                                        "and hasAuthority('SCOPE_Checkout.Create')"
+                                )
+                        )
+
+                        // Todo lo demás queda bloqueado
+                        .anyRequest()
+                        .denyAll()
+                )
+
+                .oauth2ResourceServer(oauth2 ->
+                        oauth2.jwt(jwt ->
+                                jwt.jwtAuthenticationConverter(
+                                        jwtAuthenticationConverter
+                                )
+                        )
+                );
+
+        return http.build();
+    }
 }
