@@ -1,0 +1,174 @@
+name: Backend tests
+
+on:
+  pull_request:
+  push:
+    # main calls this workflow from deploy-backend.yml before deployment.
+    branches-ignore: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  services:
+    name: Test ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth, catalog, carrito, orders, notifications]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            **/pom.xml
+            **/.mvn/wrapper/maven-wrapper.properties
+      - name: Verify tests and generate JaCoCo reports
+        working-directory: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          bash ./mvnw -B -ntp clean verify 2>&1 | tee ci-verify.log
+          test -s target/site/jacoco/index.html
+          test -s target/site/jacoco/jacoco.xml
+      - name: Upload test results and coverage
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-${{ matrix.service }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ matrix.service }}/ci-verify.log
+            ${{ matrix.service }}/target/surefire-reports/
+            ${{ matrix.service }}/target/failsafe-reports/
+            ${{ matrix.service }}/target/site/jacoco/
+            ${{ matrix.service }}/target/jacoco*.exec
+      - name: Upload verified JAR for E2E
+        if: ${{ success() && (matrix.service == 'carrito' || matrix.service == 'orders' || matrix.service == 'notifications') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: jar-${{ matrix.service }}
+          path: ${{ matrix.service }}/target/*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  messaging:
+    name: Contracts and RabbitMQ
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            **/pom.xml
+            **/.mvn/wrapper/maven-wrapper.properties
+      - name: Check Docker
+        run: docker info
+      - name: Verify event contracts and RabbitMQ integration
+        run: |
+          set -euo pipefail
+          bash orders/mvnw -B -ntp -f tests/messaging/pom.xml -Prabbit clean verify 2>&1 | tee tests/messaging/ci-verify.log
+      - name: Upload messaging results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-messaging
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            tests/messaging/ci-verify.log
+            tests/messaging/target/surefire-reports/
+            tests/messaging/target/failsafe-reports/
+
+  e2e:
+    name: Checkout E2E
+    needs: services
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            **/pom.xml
+            **/.mvn/wrapper/maven-wrapper.properties
+      - name: Download verified carrito JAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: jar-carrito
+          path: carrito/target
+      - name: Download verified orders JAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: jar-orders
+          path: orders/target
+      - name: Download verified notifications JAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: jar-notifications
+          path: notifications/target
+      - name: Check Docker
+        run: docker info
+      - name: Verify checkout, SMTP delivery and ownership
+        run: |
+          set -euo pipefail
+          bash orders/mvnw -B -ntp -f tests/e2e/pom.xml -Pe2e clean verify 2>&1 | tee tests/e2e/ci-verify.log
+      - name: Upload E2E results and service logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-e2e
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            tests/e2e/ci-verify.log
+            tests/e2e/target/failsafe-reports/
+            tests/e2e/target/e2e-logs/
+
+  test-gate:
+    name: Backend tests passed
+    if: ${{ always() }}
+    needs: [services, messaging, e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every test suite to succeed
+        env:
+          SERVICES_RESULT: ${{ needs.services.result }}
+          MESSAGING_RESULT: ${{ needs.messaging.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+        run: |
+          set -euo pipefail
+          test "$SERVICES_RESULT" = success
+          test "$MESSAGING_RESULT" = success
+          test "$E2E_RESULT" = success

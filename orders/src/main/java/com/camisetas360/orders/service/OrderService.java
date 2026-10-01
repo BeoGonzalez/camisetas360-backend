@@ -12,6 +12,7 @@ import com.camisetas360.orders.model.OrderItem;
 import com.camisetas360.orders.model.OrderStatus;
 import com.camisetas360.orders.repository.OrderRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -86,6 +87,7 @@ public class OrderService {
         return savedOrder;
     }
 
+    @Transactional(readOnly = true)
     public OrderResponseDTO findById(Long orderId, String userEmail) {
 
     Order order = orderRepository.findById(orderId)
@@ -100,6 +102,7 @@ public class OrderService {
     return toResponse(order);
 }
 
+@Transactional(readOnly = true)
 public List<OrderResponseDTO> findByUserEmail(String userEmail) {
 
     return orderRepository

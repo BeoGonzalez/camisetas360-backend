@@ -96,6 +96,73 @@
 	<build>
 		<plugins>
 			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.15</version>
+				<configuration>
+					<formats>
+						<format>HTML</format>
+						<format>XML</format>
+					</formats>
+				</configuration>
+				<executions>
+					<execution>
+						<id>coverage-test-agent</id>
+						<goals><goal>prepare-agent</goal></goals>
+						<configuration><append>false</append></configuration>
+					</execution>
+					<execution>
+						<id>coverage-test-report</id>
+						<phase>test</phase>
+						<goals><goal>report</goal></goals>
+						<configuration><title>${project.artifactId} - Surefire</title></configuration>
+					</execution>
+					<execution>
+						<id>coverage-integration-agent</id>
+						<goals><goal>prepare-agent-integration</goal></goals>
+						<configuration><append>false</append></configuration>
+					</execution>
+					<execution>
+						<id>coverage-merge</id>
+						<phase>post-integration-test</phase>
+						<goals><goal>merge</goal></goals>
+						<configuration>
+							<destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+							<fileSets>
+								<fileSet>
+									<directory>${project.build.directory}</directory>
+									<includes>
+										<include>jacoco.exec</include>
+										<include>jacoco-it.exec</include>
+									</includes>
+								</fileSet>
+							</fileSets>
+						</configuration>
+					</execution>
+					<execution>
+						<id>coverage-combined-report</id>
+						<phase>verify</phase>
+						<goals><goal>report</goal></goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+							<title>${project.artifactId} - Surefire + Failsafe</title>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<executions>
+					<execution>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
