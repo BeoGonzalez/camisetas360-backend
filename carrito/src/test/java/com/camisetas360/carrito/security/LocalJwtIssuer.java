@@ -72,6 +72,7 @@ final class LocalJwtIssuer implements AutoCloseable {
                 .claim("name", "Buyer")
                 .claim("preferred_username", "buyer@example.test")
                 .claim("scp", scope)
+                .claim("roles", java.util.List.of("CUSTOMER"))
                 .issueTime(Date.from(Instant.parse("2020-01-01T00:00:00Z")))
                 .notBeforeTime(Date.from(Instant.parse("2020-01-01T00:00:00Z")))
                 .expirationTime(Date.from(Instant.parse(
