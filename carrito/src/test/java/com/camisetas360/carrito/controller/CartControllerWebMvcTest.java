@@ -128,8 +128,8 @@ class CartControllerWebMvcTest {
     @ParameterizedTest
     @MethodSource("unauthorizedAuthorities")
     void endpoint_shouldReturn403_whenRequiredAuthorityIsMissing(String path, String authority) throws Exception {
-        var token = authority.isEmpty() ? jwt().authorities(List.of())
-                : jwt().authorities(new SimpleGrantedAuthority(authority));
+        var token = authority.isEmpty() ? jwt().authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))
+                : jwt().authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"), new SimpleGrantedAuthority(authority));
         mvc.perform(request(path).with(token)).andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.status").doesNotExist());
         verifyNoInteractions(service);
@@ -154,6 +154,15 @@ class CartControllerWebMvcTest {
         return Stream.of(PATH);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"", "ROLE_ADMIN"})
+    void checkout_shouldReturn403_whenScopeIsValidButRoleIsNot(String role) throws Exception {
+        var token = role.isEmpty() ? jwt().authorities(new SimpleGrantedAuthority(AUTHORITY))
+                : jwt().authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority(role));
+        mvc.perform(request(PATH).with(token)).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+    }
+
     static Stream<Arguments> unauthorizedAuthorities() {
         return protectedPaths().flatMap(path -> Stream.of(
                 "", "SCOPE_Other.Read", "Checkout.Create", "SCOPE_checkout.create")
@@ -164,7 +173,7 @@ class CartControllerWebMvcTest {
         return jwt().jwt(token -> token
                         .claim("preferred_username", EMAIL)
                         .claim("oid", "user-1").claim("tid", "tenant-1").claim("name", "Buyer"))
-                .authorities(new SimpleGrantedAuthority(AUTHORITY));
+                .authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority("ROLE_CUSTOMER"));
     }
 
     private static MockHttpServletRequestBuilder request(String path) {

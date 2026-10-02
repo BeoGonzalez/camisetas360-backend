@@ -133,8 +133,8 @@ class OrderControllerWebMvcTest {
     @ParameterizedTest
     @MethodSource("unauthorizedAuthorities")
     void endpoint_shouldReturn403_whenRequiredAuthorityIsMissing(String path, String authority) throws Exception {
-        var token = authority.isEmpty() ? jwt().authorities(List.of())
-                : jwt().authorities(new SimpleGrantedAuthority(authority));
+        var token = authority.isEmpty() ? jwt().authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"))
+                : jwt().authorities(new SimpleGrantedAuthority("ROLE_CUSTOMER"), new SimpleGrantedAuthority(authority));
         mvc.perform(request(path).with(token)).andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.status").doesNotExist());
         verifyNoInteractions(service);
@@ -159,6 +159,20 @@ class OrderControllerWebMvcTest {
         return Stream.of(PATH, PATH + "/42");
     }
 
+    @ParameterizedTest
+    @MethodSource("unauthorizedRoles")
+    void endpoint_shouldReturn403_whenScopeIsValidButRoleIsNot(String path, String role) throws Exception {
+        var token = role.isEmpty() ? jwt().authorities(new SimpleGrantedAuthority(AUTHORITY))
+                : jwt().authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority(role));
+        mvc.perform(request(path).with(token)).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+    }
+
+    static Stream<Arguments> unauthorizedRoles() {
+        return protectedPaths().flatMap(path -> Stream.of("", "ROLE_ADMIN")
+                .map(role -> Arguments.of(path, role)));
+    }
+
     static Stream<Arguments> unauthorizedAuthorities() {
         return protectedPaths().flatMap(path -> Stream.of(
                 "", "SCOPE_Other.Read", "Orders.Read", "SCOPE_orders.read")
@@ -169,7 +183,7 @@ class OrderControllerWebMvcTest {
         return jwt().jwt(token -> token
                         .claim("preferred_username", EMAIL)
                         .claim("oid", "user-1").claim("tid", "tenant-1").claim("name", "Buyer"))
-                .authorities(new SimpleGrantedAuthority(AUTHORITY));
+                .authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority("ROLE_CUSTOMER"));
     }
 
     private static MockHttpServletRequestBuilder request(String path) {

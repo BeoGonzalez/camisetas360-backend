@@ -1,85 +1,108 @@
 package com.camisetas360.catalog.security;
 
 import com.camisetas360.catalog.config.CorsProperties;
+
+import java.util.List;
+
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-
-import java.util.List;
 
 @Configuration
 @EnableConfigurationProperties(CorsProperties.class)
 public class SecurityConfig {
 
-    @Bean
-    public SecurityFilterChain filterChain(
-            HttpSecurity http,
-            CorsConfigurationSource corsConfigurationSource) throws Exception {
+        @Bean
+        public JwtAuthenticationConverter jwtAuthenticationConverter() {
 
-        http
-                .csrf(csrf -> csrf.disable())
+                JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
 
-                .cors(cors -> cors.configurationSource(corsConfigurationSource))
+                converter.setJwtGrantedAuthoritiesConverter(
+                                new JwtAuthoritiesConverter());
 
-                .sessionManagement(session -> session.sessionCreationPolicy(
-                        SessionCreationPolicy.STATELESS))
+                return converter;
+        }
 
-                .authorizeHttpRequests(auth -> auth
+        @Bean
+        public SecurityFilterChain filterChain(
+                        HttpSecurity http,
+                        CorsConfigurationSource corsConfigurationSource,
+                        JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
 
-                        .requestMatchers(
-                                HttpMethod.OPTIONS,
-                                "/**")
-                        .permitAll()
+                http
+                                .csrf(csrf -> csrf.disable())
 
-                        .requestMatchers(
-                                HttpMethod.GET,
-                                "/api/v1/catalog/**")
-                        .hasAuthority("SCOPE_Catalog.Read")
+                                .cors(cors -> cors.configurationSource(
+                                                corsConfigurationSource))
 
-                        .anyRequest()
-                        .denyAll())
+                                .sessionManagement(session -> session.sessionCreationPolicy(
+                                                SessionCreationPolicy.STATELESS))
 
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> {
-                }));
+                                .authorizeHttpRequests(auth -> auth
 
-        return http.build();
-    }
+                                                .requestMatchers(
+                                                                HttpMethod.OPTIONS,
+                                                                "/**")
+                                                .permitAll()
 
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource(
-            CorsProperties corsProperties) {
+                                                .requestMatchers(
+                                                                HttpMethod.GET,
+                                                                "/api/v1/catalog/**")
+                                                .access(
+                                                                new WebExpressionAuthorizationManager(
+                                                                                "hasAnyRole(" +
+                                                                                                "'CUSTOMER'," +
+                                                                                                "'CATALOG_MANAGER'," +
+                                                                                                "'ADMIN'" +
+                                                                                                ") and " +
+                                                                                                "hasAuthority('SCOPE_Catalog.Read')"))
 
-        CorsConfiguration configuration = new CorsConfiguration();
+                                                .anyRequest()
+                                                .denyAll())
 
-        configuration.setAllowedOriginPatterns(
-                corsProperties.allowedOriginPatterns());
+                                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(
+                                                jwtAuthenticationConverter)));
 
-        configuration.setAllowedMethods(
-                List.of(
-                        "GET",
-                        "OPTIONS"));
+                return http.build();
+        }
 
-        configuration.setAllowedHeaders(
-                List.of(
-                        "Authorization",
-                        "Content-Type",
-                        "Accept"));
+        @Bean
+        public CorsConfigurationSource corsConfigurationSource(
+                        CorsProperties corsProperties) {
 
-        configuration.setAllowCredentials(false);
+                CorsConfiguration configuration = new CorsConfiguration();
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+                configuration.setAllowedOriginPatterns(
+                                corsProperties.allowedOriginPatterns());
 
-        source.registerCorsConfiguration(
-                "/**",
-                configuration);
+                configuration.setAllowedMethods(
+                                List.of(
+                                                "GET",
+                                                "OPTIONS"));
 
-        return source;
-    }
+                configuration.setAllowedHeaders(
+                                List.of(
+                                                "Authorization",
+                                                "Content-Type",
+                                                "Accept"));
+
+                configuration.setAllowCredentials(false);
+
+                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+
+                source.registerCorsConfiguration(
+                                "/**",
+                                configuration);
+
+                return source;
+        }
 }

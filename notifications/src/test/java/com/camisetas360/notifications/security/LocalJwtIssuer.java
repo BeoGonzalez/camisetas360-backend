@@ -16,12 +16,17 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Test-only issuer keys and loopback JWKS; no external identity provider. */
+/**
+ * Test-only issuer keys and loopback JWKS.
+ * No external identity provider is required.
+ */
 final class LocalJwtIssuer implements AutoCloseable {
 
     static final String AUDIENCE = "camisetas360-test";
+
     private final HttpServer server;
     private final RSAKey trustedKey;
     private final RSAKey wrongKey;
@@ -29,58 +34,169 @@ final class LocalJwtIssuer implements AutoCloseable {
 
     LocalJwtIssuer() {
         try {
-            trustedKey = new RSAKeyGenerator(2048).keyID("test-key").generate();
-            wrongKey = new RSAKeyGenerator(2048).keyID("test-key").generate();
-            byte[] jwks = new JWKSet(trustedKey.toPublicJWK()).toString().getBytes(StandardCharsets.UTF_8);
-            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-            server.createContext("/jwks", exchange -> {
-                try (exchange) {
-                    jwksRequests.incrementAndGet();
-                    exchange.getResponseHeaders().set("Content-Type", "application/json");
-                    exchange.sendResponseHeaders(200, jwks.length);
-                    exchange.getResponseBody().write(jwks);
-                }
-            });
+            trustedKey = new RSAKeyGenerator(2048)
+                    .keyID("test-key")
+                    .generate();
+
+            wrongKey = new RSAKeyGenerator(2048)
+                    .keyID("test-key")
+                    .generate();
+
+            byte[] jwks = new JWKSet(
+                    trustedKey.toPublicJWK())
+                    .toString()
+                    .getBytes(StandardCharsets.UTF_8);
+
+            server = HttpServer.create(
+                    new InetSocketAddress(
+                            "127.0.0.1",
+                            0),
+                    0);
+
+            server.createContext(
+                    "/jwks",
+                    exchange -> {
+                        try (exchange) {
+                            jwksRequests.incrementAndGet();
+
+                            exchange
+                                    .getResponseHeaders()
+                                    .set(
+                                            "Content-Type",
+                                            "application/json");
+
+                            exchange.sendResponseHeaders(
+                                    200,
+                                    jwks.length);
+
+                            exchange
+                                    .getResponseBody()
+                                    .write(jwks);
+                        }
+                    });
+
             server.start();
+
         } catch (IOException | JOSEException exception) {
-            throw new IllegalStateException("Cannot start test JWKS server", exception);
+            throw new IllegalStateException(
+                    "Cannot start test JWKS server",
+                    exception);
         }
     }
 
     String issuer() {
-        return "http://127.0.0.1:" + server.getAddress().getPort() + "/issuer";
+        return "http://127.0.0.1:"
+                + server.getAddress().getPort()
+                + "/issuer";
     }
 
     String jwksUri() {
-        return "http://127.0.0.1:" + server.getAddress().getPort() + "/jwks";
+        return "http://127.0.0.1:"
+                + server.getAddress().getPort()
+                + "/jwks";
     }
 
     int jwksRequests() {
         return jwksRequests.get();
     }
 
-    String token(String scope, String variant) throws JOSEException {
+    /**
+     * Mantiene compatibilidad con tests existentes.
+     *
+     * Genera JWT sin roles.
+     */
+    String token(
+            String scope,
+            String variant) throws JOSEException {
+
+        return token(
+                scope,
+                "",
+                variant);
+    }
+
+    /**
+     * Genera un JWT firmado para pruebas con:
+     *
+     * - scp
+     * - roles
+     * - issuer
+     * - audience
+     * - firma RSA
+     */
+    String token(
+            String scope,
+            String role,
+            String variant) throws JOSEException {
+
         if ("malformed".equals(variant)) {
             return "not-a-jwt";
         }
-        var claims = new JWTClaimsSet.Builder()
-                .issuer("issuer".equals(variant) ? issuer() + "/wrong" : issuer())
-                .audience("audience".equals(variant) ? "another-api" : AUDIENCE)
+
+        JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
+                .issuer(
+                        "issuer".equals(variant)
+                                ? issuer() + "/wrong"
+                                : issuer())
+                .audience(
+                        "audience".equals(variant)
+                                ? "another-api"
+                                : AUDIENCE)
                 .subject("user-1")
-                .claim("oid", "user-1")
-                .claim("tid", "tenant-1")
-                .claim("name", "Buyer")
-                .claim("preferred_username", "buyer@example.test")
-                .claim("scp", scope)
-                .issueTime(Date.from(Instant.parse("2020-01-01T00:00:00Z")))
-                .notBeforeTime(Date.from(Instant.parse("2020-01-01T00:00:00Z")))
-                .expirationTime(Date.from(Instant.parse(
-                        "expired".equals(variant) ? "2021-01-01T00:00:00Z" : "2100-01-01T00:00:00Z")))
-                .build();
-        var jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256)
-                .keyID(trustedKey.getKeyID()).build(), claims);
-        // Same kid for the wrong key: test signature verification, not key lookup failure.
-        jwt.sign(new RSASSASigner("signature".equals(variant) ? wrongKey : trustedKey));
+                .claim(
+                        "oid",
+                        "user-1")
+                .claim(
+                        "tid",
+                        "tenant-1")
+                .claim(
+                        "name",
+                        "Buyer")
+                .claim(
+                        "preferred_username",
+                        "buyer@example.test")
+                .claim(
+                        "scp",
+                        scope)
+                .issueTime(
+                        Date.from(
+                                Instant.parse(
+                                        "2020-01-01T00:00:00Z")))
+                .notBeforeTime(
+                        Date.from(
+                                Instant.parse(
+                                        "2020-01-01T00:00:00Z")))
+                .expirationTime(
+                        Date.from(
+                                Instant.parse(
+                                        "expired".equals(variant)
+                                                ? "2021-01-01T00:00:00Z"
+                                                : "2100-01-01T00:00:00Z")));
+
+        if (role != null && !role.isBlank()) {
+            builder.claim(
+                    "roles",
+                    List.of(role));
+        }
+
+        var claims = builder.build();
+
+        var jwt = new SignedJWT(
+                new JWSHeader.Builder(
+                        JWSAlgorithm.RS256)
+                        .keyID(
+                                trustedKey.getKeyID())
+                        .build(),
+                claims);
+
+        // Mismo kid con llave incorrecta:
+        // valida fallo criptográfico real de firma.
+        jwt.sign(
+                new RSASSASigner(
+                        "signature".equals(variant)
+                                ? wrongKey
+                                : trustedKey));
+
         return jwt.serialize();
     }
 
@@ -89,4 +205,3 @@ final class LocalJwtIssuer implements AutoCloseable {
         server.stop(0);
     }
 }
-

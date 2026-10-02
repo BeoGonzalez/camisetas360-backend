@@ -11,37 +11,29 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 
 public class JwtAuthoritiesConverter
-        implements Converter<Jwt, Collection<GrantedAuthority>> {
+                implements Converter<Jwt, Collection<GrantedAuthority>> {
 
-    private final JwtGrantedAuthoritiesConverter scopeConverter =
-            new JwtGrantedAuthoritiesConverter();
+        private final JwtGrantedAuthoritiesConverter scopeConverter = new JwtGrantedAuthoritiesConverter();
 
-    @Override
-    public Collection<GrantedAuthority> convert(Jwt jwt) {
+        @Override
+        public Collection<GrantedAuthority> convert(Jwt jwt) {
 
-        Collection<GrantedAuthority> authorities =
-                new ArrayList<>();
+                Collection<GrantedAuthority> authorities = new ArrayList<>();
 
-        Collection<GrantedAuthority> scopeAuthorities =
-                scopeConverter.convert(jwt);
+                Collection<GrantedAuthority> scopeAuthorities = scopeConverter.convert(jwt);
 
-        if (scopeAuthorities != null) {
-            authorities.addAll(scopeAuthorities);
+                if (scopeAuthorities != null) {
+                        authorities.addAll(scopeAuthorities);
+                }
+
+                List<String> roles = jwt.getClaimAsStringList("roles");
+
+                if (roles != null) {
+                        roles.forEach(role -> authorities.add(
+                                        new SimpleGrantedAuthority(
+                                                        "ROLE_" + role)));
+                }
+
+                return authorities;
         }
-
-        List<String> roles =
-                jwt.getClaimAsStringList("roles");
-
-        if (roles != null) {
-            roles.forEach(role ->
-                    authorities.add(
-                            new SimpleGrantedAuthority(
-                                    "ROLE_" + role
-                            )
-                    )
-            );
-        }
-
-        return authorities;
-    }
 }

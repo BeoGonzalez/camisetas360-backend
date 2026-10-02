@@ -5,49 +5,66 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 
 @Configuration
 public class SecurityConfig {
 
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        @Bean
+        public JwtAuthenticationConverter jwtAuthenticationConverter() {
 
-        http
-                .csrf(csrf -> csrf.disable())
+                JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
 
-                .cors(cors -> cors.disable())
+                converter.setJwtGrantedAuthoritiesConverter(
+                                new JwtAuthoritiesConverter());
 
-                .sessionManagement(session -> session.sessionCreationPolicy(
-                        SessionCreationPolicy.STATELESS))
+                return converter;
+        }
 
-                .authorizeHttpRequests(auth -> auth
+        @Bean
+        public SecurityFilterChain filterChain(
+                        HttpSecurity http,
+                        JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
 
-                        // Health check para Docker/monitorización
-                        .requestMatchers(
-                                HttpMethod.GET,
-                                "/actuator/health")
-                        .permitAll()
+                http
+                                .csrf(csrf -> csrf.disable())
 
-                        // Preflight
-                        .requestMatchers(
-                                HttpMethod.OPTIONS,
-                                "/**")
-                        .permitAll()
+                                .cors(cors -> cors.disable())
 
-                        // Envío manual/directo de correos
-                        .requestMatchers(
-                                HttpMethod.POST,
-                                "/api/v1/notifications/email")
-                        .hasAuthority("SCOPE_Notifications.Send")
+                                .sessionManagement(session -> session.sessionCreationPolicy(
+                                                SessionCreationPolicy.STATELESS))
 
-                        // Todo lo demás queda bloqueado
-                        .anyRequest()
-                        .denyAll())
+                                .authorizeHttpRequests(auth -> auth
 
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> {
-                }));
+                                                .requestMatchers(
+                                                                HttpMethod.GET,
+                                                                "/actuator/health")
+                                                .permitAll()
 
-        return http.build();
-    }
+                                                .requestMatchers(
+                                                                HttpMethod.OPTIONS,
+                                                                "/**")
+                                                .permitAll()
+
+                                                .requestMatchers(
+                                                                HttpMethod.POST,
+                                                                "/api/v1/notifications/email")
+                                                .access(
+                                                                new WebExpressionAuthorizationManager(
+                                                                                "hasRole('ADMIN') " +
+                                                                                                "and hasAuthority(" +
+                                                                                                "'SCOPE_Notifications.Send'"
+                                                                                                +
+                                                                                                ")"))
+
+                                                .anyRequest()
+                                                .denyAll())
+
+                                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(
+                                                jwtAuthenticationConverter)));
+
+                return http.build();
+        }
 }

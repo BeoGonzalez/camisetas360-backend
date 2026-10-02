@@ -12,72 +12,51 @@ import org.springframework.security.web.access.expression.WebExpressionAuthoriza
 @Configuration
 public class SecurityConfig {
 
-    @Bean
-    public JwtAuthenticationConverter jwtAuthenticationConverter() {
+        @Bean
+        public JwtAuthenticationConverter jwtAuthenticationConverter() {
 
-        JwtAuthenticationConverter converter =
-                new JwtAuthenticationConverter();
+                JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
 
-        converter.setJwtGrantedAuthoritiesConverter(
-                new JwtAuthoritiesConverter()
-        );
+                converter.setJwtGrantedAuthoritiesConverter(
+                                new JwtAuthoritiesConverter());
 
-        return converter;
-    }
+                return converter;
+        }
 
-    @Bean
-    public SecurityFilterChain filterChain(
-            HttpSecurity http,
-            JwtAuthenticationConverter jwtAuthenticationConverter
-    ) throws Exception {
+        @Bean
+        public SecurityFilterChain filterChain(
+                        HttpSecurity http,
+                        JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
 
-        http
-                .csrf(csrf -> csrf.disable())
+                http
+                                .csrf(csrf -> csrf.disable())
 
-                // CORS administrado externamente
-                .cors(cors -> cors.disable())
+                                .cors(cors -> cors.disable())
 
-                .sessionManagement(session ->
-                        session.sessionCreationPolicy(
-                                SessionCreationPolicy.STATELESS
-                        )
-                )
+                                .sessionManagement(session -> session.sessionCreationPolicy(
+                                                SessionCreationPolicy.STATELESS))
 
-                .authorizeHttpRequests(auth -> auth
+                                .authorizeHttpRequests(auth -> auth
 
-                        // Preflight CORS
-                        .requestMatchers(
-                                HttpMethod.OPTIONS,
-                                "/**"
-                        )
-                        .permitAll()
+                                                .requestMatchers(
+                                                                HttpMethod.OPTIONS,
+                                                                "/**")
+                                                .permitAll()
 
-                        // Checkout:
-                        // requiere CUSTOMER + Checkout.Create
-                        .requestMatchers(
-                                HttpMethod.POST,
-                                "/api/v1/carrito/checkout"
-                        )
-                        .access(
-                                new WebExpressionAuthorizationManager(
-                                        "hasRole('CUSTOMER') " +
-                                        "and hasAuthority('SCOPE_Checkout.Create')"
-                                )
-                        )
+                                                .requestMatchers(
+                                                                HttpMethod.POST,
+                                                                "/api/v1/carrito/checkout")
+                                                .access(
+                                                                new WebExpressionAuthorizationManager(
+                                                                                "hasRole('CUSTOMER') " +
+                                                                                                "and hasAuthority('SCOPE_Checkout.Create')"))
 
-                        // Todo lo demás queda bloqueado
-                        .anyRequest()
-                        .denyAll()
-                )
+                                                .anyRequest()
+                                                .denyAll())
 
-                .oauth2ResourceServer(oauth2 ->
-                        oauth2.jwt(jwt ->
-                                jwt.jwtAuthenticationConverter(
-                                        jwtAuthenticationConverter
-                                )
-                        )
-                );
+                                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(
+                                                jwtAuthenticationConverter)));
 
-        return http.build();
-    }
+                return http.build();
+        }
 }
