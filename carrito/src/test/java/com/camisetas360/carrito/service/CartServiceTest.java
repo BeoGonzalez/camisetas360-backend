@@ -37,6 +37,9 @@ class CartServiceTest {
     @Mock
     private CheckoutEventPublisher publisher;
 
+    @Mock
+    private com.camisetas360.carrito.repository.CheckoutRequestRepository checkouts;
+
     @InjectMocks
     private CartService service;
 

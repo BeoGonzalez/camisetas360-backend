@@ -8,6 +8,8 @@ import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import com.camisetas360.orders.support.PostgresTestSupport;
 
 import java.time.Instant;
 import java.util.List;
@@ -16,10 +18,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
 @DataJpaTest(properties = {
-        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "spring.jpa.hibernate.ddl-auto=validate",
         "spring.sql.init.mode=never"
 })
-class OrderRepositoryTest {
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+class OrderRepositoryTest extends PostgresTestSupport {
 
     private static final String EMAIL = "buyer@example.test";
     private static final Instant CREATED_AT = Instant.parse("2026-01-01T12:00:00Z");

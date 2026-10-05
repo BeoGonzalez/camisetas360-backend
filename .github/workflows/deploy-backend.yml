@@ -31,6 +31,7 @@ jobs:
           persist-credentials: false
 
       - name: Configure AWS Credentials
+        # Images contain the same JARs verified by the required CI workflow.
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -41,6 +42,20 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Download JARs verified by CI
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: jar-*
+          path: verified-jars
+
+      - name: Place verified JARs in Docker build contexts
+        run: |
+          set -euo pipefail
+          for service in auth catalog carrito orders notifications; do
+            mkdir -p "$service/target"
+            cp "verified-jars/jar-$service/"*.jar "$service/target/"
+          done
 
       - name: Build, Tag and Push Auth
         env:
@@ -66,7 +81,18 @@ jobs:
           docker build -t "$REGISTRY/$REPOSITORY:latest" ./carrito
           docker push "$REGISTRY/$REPOSITORY:latest"
 
+      - name: Build, Tag and Push Orders and Notifications
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          for service in orders notifications; do
+            docker build -t "$REGISTRY/camisetas360-$service:latest" "./$service"
+            docker push "$REGISTRY/camisetas360-$service:latest"
+          done
+
       - name: Trigger Deployment on EC2 via AWS SSM
+        # The existing EC2 deployment is retained; EKS manifests are prepared separately.
         run: |
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \

@@ -14,7 +14,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-class AuthApplicationTests {
+class AuthApplicationTests extends com.camisetas360.auth.support.PostgresTestSupport {
 
     @Autowired
     private ApplicationContext context;

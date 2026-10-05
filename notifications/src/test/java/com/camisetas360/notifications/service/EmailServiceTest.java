@@ -20,11 +20,13 @@ class EmailServiceTest {
 
     @Mock
     private JavaMailSender mailSender;
+    @Mock
+    private com.camisetas360.notifications.repository.EmailDeliveryRepository deliveries;
     private EmailService service;
 
     @BeforeEach
     void setUp() {
-        service = new EmailService(mailSender, "shop@example.test");
+        service = new EmailService(mailSender, "shop@example.test", deliveries);
     }
 
     // UT-NOT-001

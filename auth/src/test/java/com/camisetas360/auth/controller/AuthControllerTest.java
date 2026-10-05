@@ -16,7 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AuthControllerTest {
 
-    private final AuthController controller = new AuthController();
+    private final AuthController controller = new AuthController(new com.camisetas360.auth.service.UserProfileService(
+            org.mockito.Mockito.mock(com.camisetas360.auth.repository.UserProfileRepository.class)));
 
     // UT-AUTH-001
     @Test
@@ -52,7 +53,7 @@ class AuthControllerTest {
                 "oid", "user-123", "tid", "tenant-456",
                 "preferred_username", "buyer@example.test", "name", "María Pérez"));
         claims.remove(missingClaim);
-        return Jwt.withTokenValue("unit-test-token").header("alg", "none")
+        return Jwt.withTokenValue("unit-test-token").header("alg", "none").issuer("https://issuer.example.test").subject("user-123")
                 .claims(values -> values.putAll(claims)).build();
     }
 }

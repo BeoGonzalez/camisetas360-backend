@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "MAIL_PASSWORD=test-only",
         "MAIL_FROM=from@example.test"
 })
-class NotificationsApplicationTests {
+class NotificationsApplicationTests extends com.camisetas360.notifications.support.PostgresTestSupport {
 
     @Autowired
     private ApplicationContext context;

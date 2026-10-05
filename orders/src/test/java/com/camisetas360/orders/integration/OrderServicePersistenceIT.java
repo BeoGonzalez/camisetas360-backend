@@ -15,6 +15,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import com.camisetas360.orders.support.PostgresTestSupport;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -30,13 +32,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @DataJpaTest(properties = {
-        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "spring.jpa.hibernate.ddl-auto=validate",
         "spring.jpa.open-in-view=false",
         "spring.sql.init.mode=never"
 })
 @Import(OrderService.class)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-class OrderServicePersistenceIT {
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+class OrderServicePersistenceIT extends PostgresTestSupport {
 
     private static final String EMAIL = "buyer@example.test";
     private static final Instant CREATED_AT = Instant.parse("2026-01-01T12:00:00Z");

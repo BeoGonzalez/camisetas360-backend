@@ -28,9 +28,9 @@ import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.*;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
-import org.springframework.jdbc.datasource.embedded.EmbeddedDatabase;
-import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseBuilder;
-import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseType;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.flywaydb.core.Flyway;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
@@ -67,6 +67,7 @@ class MessagingRabbitIT {
     private static final String NOTIFICATION_QUEUE = "notifications.order-created.q";
     private static final RabbitMQContainer RABBIT = new RabbitMQContainer(
             System.getProperty("rabbitmq.image", "rabbitmq:4-management"));
+    private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17");
 
     private CachingConnectionFactory connection;
     private RabbitAdmin admin;
@@ -75,10 +76,12 @@ class MessagingRabbitIT {
     static void startBroker() {
         // No disabledWithoutDocker: infrastructure failures must fail this explicit profile.
         RABBIT.start();
+        POSTGRES.start();
     }
 
     @AfterAll
     static void stopBroker() {
+        POSTGRES.stop();
         RABBIT.stop();
     }
 
@@ -314,19 +317,25 @@ class MessagingRabbitIT {
             return template;
         }
 
-        @Bean(destroyMethod = "shutdown")
-        EmbeddedDatabase dataSource() {
-            return new EmbeddedDatabaseBuilder().generateUniqueName(true)
-                    .setType(EmbeddedDatabaseType.H2).build();
+        @Bean
+        DataSource dataSource() {
+            return new DriverManagerDataSource(POSTGRES.getJdbcUrl(),
+                    POSTGRES.getUsername(), POSTGRES.getPassword());
+        }
+
+        @Bean(initMethod = "migrate")
+        Flyway flyway(DataSource dataSource) {
+            return Flyway.configure().dataSource(dataSource).load();
         }
 
         @Bean
+        @DependsOn("flyway")
         LocalContainerEntityManagerFactoryBean entityManagerFactory(DataSource dataSource) {
             var factory = new LocalContainerEntityManagerFactoryBean();
             factory.setDataSource(dataSource);
             factory.setPackagesToScan(Order.class.getPackageName());
             factory.setJpaVendorAdapter(new HibernateJpaVendorAdapter());
-            factory.setJpaPropertyMap(Map.of("hibernate.hbm2ddl.auto", "create-drop"));
+            factory.setJpaPropertyMap(Map.of("hibernate.hbm2ddl.auto", "validate"));
             return factory;
         }
 

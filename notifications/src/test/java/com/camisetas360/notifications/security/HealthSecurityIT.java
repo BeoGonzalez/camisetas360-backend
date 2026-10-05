@@ -28,7 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.cors.allowed-origin-patterns[0]=https://frontend.example.test"
 })
 @AutoConfigureMockMvc
-class HealthSecurityIT {
+class HealthSecurityIT extends com.camisetas360.notifications.support.PostgresTestSupport {
 
     @Autowired
     private MockMvc mvc;

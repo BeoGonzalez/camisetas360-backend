@@ -38,6 +38,11 @@ public class SecurityConfig {
 
                                 .authorizeHttpRequests(auth -> auth
 
+                                                .requestMatchers(HttpMethod.GET,
+                                                                "/actuator/health/liveness",
+                                                                "/actuator/health/readiness")
+                                                .permitAll()
+
                                                 .requestMatchers(
                                                                 HttpMethod.OPTIONS,
                                                                 "/**")

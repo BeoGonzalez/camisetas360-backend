@@ -1,7 +1,3 @@
-target/
-.git
-.gitignore
-.idea/
-*.iml
-*.log
-.DS_Store
+**
+!target/
+!target/*-SNAPSHOT.jar

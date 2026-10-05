@@ -7,6 +7,7 @@ import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -20,6 +21,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.sql.DriverManager;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -57,6 +60,9 @@ class CheckoutFlowE2EIT {
 
     private HttpClient http;
     private RabbitMQContainer rabbit;
+    private PostgreSQLContainer postgres;
+    private PostgreSQLContainer carritoPostgres;
+    private PostgreSQLContainer notificationsPostgres;
     private GenericContainer<?> smtp;
     private TestJwtIssuer issuer;
     private ServiceProcess carrito;
@@ -90,6 +96,17 @@ class CheckoutFlowE2EIT {
                         .connectTimeout(
                                 Duration.ofSeconds(5))
                         .build());
+
+        postgres = register(new PostgreSQLContainer("postgres:17")
+                .withDatabaseName("orders_e2e"));
+        postgres.start();
+
+        carritoPostgres = register(new PostgreSQLContainer("postgres:17")
+                .withDatabaseName("carrito_e2e"));
+        carritoPostgres.start();
+        notificationsPostgres = register(new PostgreSQLContainer("postgres:17")
+                .withDatabaseName("notifications_e2e"));
+        notificationsPostgres.start();
 
         rabbit = register(
                 new RabbitMQContainer(
@@ -156,18 +173,19 @@ class CheckoutFlowE2EIT {
                         root,
                         logs,
                         "carrito",
-                        common));
+                        databaseProperties(common, carritoPostgres)));
 
         var orderProperties = new HashMap<>(common);
 
         orderProperties.put(
                 "spring.datasource.url",
-                "jdbc:h2:mem:e2e_"
-                        + UUID.randomUUID());
+                postgres.getJdbcUrl());
+        orderProperties.put("spring.datasource.username", postgres.getUsername());
+        orderProperties.put("spring.datasource.password", postgres.getPassword());
 
         orderProperties.put(
                 "spring.jpa.hibernate.ddl-auto",
-                "create-drop");
+                "validate");
 
         orders = register(
                 new ServiceProcess(
@@ -176,7 +194,7 @@ class CheckoutFlowE2EIT {
                         "orders",
                         orderProperties));
 
-        var notificationProperties = new HashMap<>(common);
+        var notificationProperties = databaseProperties(common, notificationsPostgres);
 
         notificationProperties.putAll(
                 Map.of(
@@ -285,6 +303,11 @@ class CheckoutFlowE2EIT {
                         .get("messages")
                         .size())
                 .isZero();
+
+        rabbitManagement("PUT", "/api/queues/%2F/e2e.order-created.capture",
+                "{\"durable\":true,\"auto_delete\":false,\"arguments\":{}}", 201);
+        rabbitManagement("POST", "/api/bindings/%2F/e/camisetas360.orders/q/e2e.order-created.capture",
+                "{\"routing_key\":\"order.created\",\"arguments\":{}}", 201);
     }
 
     @Test
@@ -414,6 +437,8 @@ class CheckoutFlowE2EIT {
                 "checkout-response.json",
                 accepted);
 
+        assertCheckoutPersisted(UUID.fromString(accepted.get("requestId").asString()), email);
+
         var listUrl = orders.baseUrl()
                 + "/api/v1/orders";
 
@@ -448,6 +473,9 @@ class CheckoutFlowE2EIT {
 
         long id = order.get("orderId")
                 .asLong();
+
+        assertPersistedInPostgres(id, email);
+        assertOrderCreatedEvent(id, email);
 
         assertThat(
                 getJson(
@@ -546,6 +574,8 @@ class CheckoutFlowE2EIT {
                                     message);
                         });
 
+        assertDeliveryPersisted(id, email);
+
         return new Flow(
                 id,
                 token,
@@ -599,6 +629,126 @@ class CheckoutFlowE2EIT {
                 .containsExactlyInAnyOrder(
                         expected.get(0),
                         expected.get(1));
+    }
+
+    private void assertPersistedInPostgres(long id, String email) throws Exception {
+        try (var connection = DriverManager.getConnection(postgres.getJdbcUrl(),
+                postgres.getUsername(), postgres.getPassword())) {
+            assertThat(connection.getMetaData().getDatabaseProductName()).isEqualTo("PostgreSQL");
+            try (var query = connection.prepareStatement(
+                    "SELECT user_email, total_amount, status, created_at FROM orders WHERE id = ?")) {
+                query.setLong(1, id);
+                try (var result = query.executeQuery()) {
+                    assertThat(result.next()).as("Committed order exists in PostgreSQL").isTrue();
+                    assertThat(result.getString("user_email")).isEqualTo(email);
+                    assertThat(result.getDouble("total_amount")).isEqualTo(69.0);
+                    assertThat(result.getString("status")).isEqualTo("CREATED");
+                    assertThat(result.getObject("created_at", OffsetDateTime.class).toInstant())
+                            .isBetween(Instant.now().minusSeconds(120), Instant.now());
+                    assertThat(result.next()).isFalse();
+                }
+            }
+            var storedItems = new ArrayList<String>();
+            try (var query = connection.prepareStatement(
+                    "SELECT sku, quantity, unit_price FROM order_items WHERE order_id = ?")) {
+                query.setLong(1, id);
+                try (var result = query.executeQuery()) {
+                    while (result.next()) {
+                        storedItems.add(result.getString("sku") + ":" + result.getInt("quantity")
+                                + ":" + result.getDouble("unit_price"));
+                    }
+                }
+            }
+            assertThat(storedItems).containsExactlyInAnyOrder("CAM-Ñ-東京:2:19.5", "CAM-002:3:10.0");
+            try (var query = connection.createStatement();
+                 var result = query.executeQuery(
+                         "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")) {
+                var versions = new ArrayList<String>();
+                while (result.next()) versions.add(result.getString(1));
+                assertThat(versions).containsExactly("1", "2", "3");
+            }
+        }
+        Files.writeString(logs.resolve("postgres-persistence.txt"),
+                "PostgreSQL: committed order " + id + "; owner=" + email
+                        + "; total=69.0; status=CREATED; items=2; Flyway=1,2,3\n");
+    }
+
+    private HashMap<String, String> databaseProperties(Map<String, String> common, PostgreSQLContainer database) {
+        var properties = new HashMap<>(common);
+        properties.put("spring.datasource.url", database.getJdbcUrl());
+        properties.put("spring.datasource.username", database.getUsername());
+        properties.put("spring.datasource.password", database.getPassword());
+        properties.put("spring.jpa.hibernate.ddl-auto", "validate");
+        return properties;
+    }
+
+    private void assertCheckoutPersisted(UUID requestId, String email) throws Exception {
+        try (var connection = DriverManager.getConnection(carritoPostgres.getJdbcUrl(),
+                carritoPostgres.getUsername(), carritoPostgres.getPassword())) {
+            try (var query = connection.prepareStatement(
+                    "SELECT user_email,total_amount,status,created_at FROM checkout_requests WHERE id=?")) {
+                query.setObject(1, requestId);
+                try (var result = query.executeQuery()) {
+                    assertThat(result.next()).as("Checkout committed in carrito's own PostgreSQL").isTrue();
+                    assertThat(result.getString("user_email")).isEqualTo(email);
+                    assertThat(result.getDouble("total_amount")).isEqualTo(69.0);
+                    assertThat(result.getString("status")).isEqualTo("PROCESSING");
+                    assertThat(result.getObject("created_at", OffsetDateTime.class).toInstant())
+                            .isBetween(Instant.now().minusSeconds(120), Instant.now());
+                    assertThat(result.next()).isFalse();
+                }
+            }
+            var items = new ArrayList<String>();
+            try (var query = connection.prepareStatement(
+                    "SELECT sku,quantity,unit_price FROM checkout_request_items WHERE checkout_id=?")) {
+                query.setObject(1, requestId);
+                try (var result = query.executeQuery()) {
+                    while (result.next()) items.add(result.getString("sku") + ":" + result.getInt("quantity") + ":" + result.getDouble("unit_price"));
+                }
+            }
+            assertThat(items).containsExactlyInAnyOrder("CAM-Ñ-東京:2:19.5", "CAM-002:3:10.0");
+            assertSingleMigration(connection);
+        }
+        Files.writeString(logs.resolve("carrito-persistence.txt"),
+                "Carrito PostgreSQL: committed checkout=" + requestId + "; owner=" + email + "; total=69; items=2; Flyway=1\n");
+    }
+
+    private void assertDeliveryPersisted(long id, String email) {
+        await().alias("SMTP success committed in notifications PostgreSQL").atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+            try (var connection = DriverManager.getConnection(notificationsPostgres.getJdbcUrl(),
+                    notificationsPostgres.getUsername(), notificationsPostgres.getPassword());
+                 var query = connection.createStatement();
+                 var result = query.executeQuery("SELECT sender,recipient,subject,body,sent_at FROM email_deliveries")) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getString("sender")).isEqualTo(FROM);
+                assertThat(result.getString("recipient")).isEqualTo(email);
+                assertThat(result.getString("subject")).isEqualTo("Orden creada #" + id);
+                assertThat(result.getString("body")).isEqualTo("""
+                        Hola,
+
+                        Tu orden fue creada correctamente.
+
+                        Número de orden: %s
+                        Total: $69.00
+                        Estado: CREATED
+
+                        Gracias por comprar en Camisetas360.
+                        """.formatted(id));
+                assertThat(result.getObject("sent_at", OffsetDateTime.class).toInstant())
+                        .isBetween(Instant.now().minusSeconds(120), Instant.now());
+                assertThat(result.next()).as("Exactly one successful delivery logged").isFalse();
+                assertSingleMigration(connection);
+            }
+        });
+    }
+
+    private void assertSingleMigration(java.sql.Connection connection) throws Exception {
+        try (var query = connection.createStatement();
+             var result = query.executeQuery("SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")) {
+            assertThat(result.next()).isTrue();
+            assertThat(result.getString(1)).isEqualTo("1");
+            assertThat(result.next()).isFalse();
+        }
     }
 
     private void assertQueueHasConsumer(
@@ -657,6 +807,39 @@ class CheckoutFlowE2EIT {
                 consumers.asInt())
                 .isGreaterThanOrEqualTo(
                         1);
+    }
+
+    private void assertOrderCreatedEvent(long orderId, String email) {
+        await().alias("Actual order.created on RabbitMQ").atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+            var captured = rabbitManagement("POST", "/api/queues/%2F/e2e.order-created.capture/get",
+                    "{\"count\":10,\"ackmode\":\"ack_requeue_true\",\"encoding\":\"auto\",\"truncate\":50000}", 200);
+            assertThat(captured.size()).isEqualTo(1);
+            assertThat(captured.get(0).get("routing_key").asString()).isEqualTo("order.created");
+            var event = JSON.readTree(captured.get(0).get("payload").asString());
+            assertThat(event.get("orderId").asLong()).isEqualTo(orderId);
+            assertThat(event.get("userEmail").asString()).isEqualTo(email);
+            assertThat(event.get("totalAmount").asDouble()).isEqualTo(69.0);
+            var eventItems = new ArrayList<JsonNode>();
+            event.get("items").forEach(eventItems::add);
+            var expected = JSON.readTree(ITEMS);
+            assertThat(eventItems).containsExactlyInAnyOrder(expected.get(0), expected.get(1));
+            assertThat(Instant.parse(event.get("occurredAt").asString()))
+                    .isBetween(Instant.now().minusSeconds(120), Instant.now());
+            save("order-created-event.json", event);
+        });
+    }
+
+    private JsonNode rabbitManagement(String method, String path, String body, int expectedStatus) throws Exception {
+        var credentials = rabbit.getAdminUsername() + ":" + rabbit.getAdminPassword();
+        var request = HttpRequest.newBuilder(URI.create(rabbit.getHttpUrl() + path))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                        .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)))
+                .header("Content-Type", "application/json")
+                .method(method, HttpRequest.BodyPublishers.ofString(body)).build();
+        var response = http.send(request, HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).as(method + " " + path + ": " + response.body()).isEqualTo(expectedStatus);
+        return response.body().isBlank() ? JSON.nullNode() : JSON.readTree(response.body());
     }
 
     private HttpResponse<String> request(
@@ -755,6 +938,16 @@ class CheckoutFlowE2EIT {
         Exception failure = null;
 
         try {
+
+            if (postgres != null && postgres.isRunning()) {
+                Files.writeString(logs.resolve("postgres.log"), postgres.getLogs());
+            }
+            if (carritoPostgres != null && carritoPostgres.isRunning()) {
+                Files.writeString(logs.resolve("carrito-postgres.log"), carritoPostgres.getLogs());
+            }
+            if (notificationsPostgres != null && notificationsPostgres.isRunning()) {
+                Files.writeString(logs.resolve("notifications-postgres.log"), notificationsPostgres.getLogs());
+            }
 
             if (rabbit != null
                     && rabbit.isRunning()) {

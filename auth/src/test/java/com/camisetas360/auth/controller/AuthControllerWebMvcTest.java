@@ -23,7 +23,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(controllers = AuthController.class, properties = "app.cors.allowed-origin-patterns[0]=https://frontend.example.test")
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, com.camisetas360.auth.service.UserProfileService.class})
 class AuthControllerWebMvcTest {
 
     private static final String PATH = "/api/v1/auth/profile";
@@ -35,6 +35,9 @@ class AuthControllerWebMvcTest {
 
     @MockitoBean
     private JwtDecoder decoder;
+
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.camisetas360.auth.repository.UserProfileRepository profiles;
 
 
     // MVC-AUTH-001
@@ -124,6 +127,7 @@ class AuthControllerWebMvcTest {
 
     private static JwtRequestPostProcessor authorized() {
         return jwt().jwt(token -> token
+                        .claim("iss", "https://issuer.example.test").subject("user-1")
                         .claim("preferred_username", EMAIL)
                         .claim("oid", "user-1").claim("tid", "tenant-1").claim("name", "Buyer"))
                 .authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority("ROLE_CUSTOMER"));

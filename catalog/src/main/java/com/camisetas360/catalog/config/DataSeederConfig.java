@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.Locale;
 
 /**
- * Configuración para poblar la base de datos H2 en memoria al arrancar la
+ * Configuración para poblar la base de datos PostgreSQL al arrancar la
  * aplicación.
  * Utiliza Datafaker para generar 3 equipaciones aleatorias por cada equipo de
  * las 5 grandes ligas.
@@ -56,7 +56,7 @@ public class DataSeederConfig {
                         }
                     }
                 }
-                System.out.println("Base de datos H2 poblada con " + repository.count() + " camisetas en total.");
+                System.out.println("Base de datos poblada con " + repository.count() + " camisetas en total.");
             }
         };
     }
