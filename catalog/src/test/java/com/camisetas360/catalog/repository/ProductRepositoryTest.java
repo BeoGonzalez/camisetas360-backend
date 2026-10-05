@@ -4,24 +4,35 @@ import com.camisetas360.catalog.models.Product;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import com.camisetas360.catalog.support.PostgresTestSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
 @DataJpaTest(properties = {
-        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "spring.jpa.hibernate.ddl-auto=validate",
         "spring.sql.init.mode=never",
         "spring.jpa.defer-datasource-initialization=false"
 })
-class ProductRepositoryTest {
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+class ProductRepositoryTest extends PostgresTestSupport {
 
     @Autowired
     private ProductRepository repository;
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    @BeforeEach
+    void isolateRepositoryFixturesFromVersionedSeed() {
+        repository.deleteAll();
+        repository.flush();
+        entityManager.clear();
+    }
 
     // JPA-CAT-001
     @Test

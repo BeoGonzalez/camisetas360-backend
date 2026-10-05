@@ -66,7 +66,7 @@ final class LocalJwtIssuer implements AutoCloseable {
         var claims = new JWTClaimsSet.Builder()
                 .issuer("issuer".equals(variant) ? issuer() + "/wrong" : issuer())
                 .audience("audience".equals(variant) ? "another-api" : AUDIENCE)
-                .subject("user-1")
+                .subject("missing-subject".equals(variant) ? null : "user-1")
                 .claim("oid", "user-1")
                 .claim("tid", "tenant-1")
                 .claim("name", "Buyer")

@@ -1,5 +1,7 @@
 package com.camisetas360.catalog;
 
+import com.camisetas360.catalog.support.PostgresTestSupport;
+
 import com.camisetas360.catalog.controller.CatalogController;
 import com.camisetas360.catalog.repository.ProductRepository;
 import com.camisetas360.catalog.models.Product;
@@ -15,10 +17,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:catalog-smoke;DB_CLOSE_DELAY=-1",
-        "spring.jpa.hibernate.ddl-auto=create-drop"
+        "spring.jpa.hibernate.ddl-auto=validate"
 })
-class CatalogApplicationTests {
+class CatalogApplicationTests extends PostgresTestSupport {
 
     @Autowired
     private ApplicationContext context;

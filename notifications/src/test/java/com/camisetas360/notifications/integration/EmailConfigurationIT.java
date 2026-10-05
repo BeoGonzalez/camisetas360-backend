@@ -39,6 +39,8 @@ class EmailConfigurationIT {
                 })
                 .withPropertyValues("MAIL_USERNAME=fallback@example.test", "MAIL_PASSWORD=test-only")
                 .withBean(JavaMailSender.class, () -> sender)
+                .withBean(com.camisetas360.notifications.repository.EmailDeliveryRepository.class,
+                        () -> mock(com.camisetas360.notifications.repository.EmailDeliveryRepository.class))
                 .withUserConfiguration(EmailService.class);
         if (explicit) {
             runner = runner.withPropertyValues("MAIL_FROM=explicit@example.test");

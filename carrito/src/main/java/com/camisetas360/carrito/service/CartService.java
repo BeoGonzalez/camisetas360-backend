@@ -5,9 +5,12 @@ import com.camisetas360.carrito.dtos.OrderRequestDTO;
 import com.camisetas360.carrito.messaging.CheckoutEventPublisher;
 import com.camisetas360.carrito.messaging.event.CheckoutItemEvent;
 import com.camisetas360.carrito.messaging.event.CheckoutRequestedEvent;
+import com.camisetas360.carrito.model.CheckoutRequest;
+import com.camisetas360.carrito.repository.CheckoutRequestRepository;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -17,11 +20,14 @@ import java.util.UUID;
 public class CartService {
 
         private final CheckoutEventPublisher checkoutEventPublisher;
+        private final CheckoutRequestRepository checkouts;
 
-        public CartService(CheckoutEventPublisher checkoutEventPublisher) {
+        public CartService(CheckoutEventPublisher checkoutEventPublisher, CheckoutRequestRepository checkouts) {
                 this.checkoutEventPublisher = checkoutEventPublisher;
+                this.checkouts = checkouts;
         }
 
+        @Transactional
         public CheckoutResponseDTO createOrder(OrderRequestDTO request) {
 
                 Jwt jwt = (Jwt) SecurityContextHolder
@@ -50,11 +56,14 @@ public class CartService {
                                 items,
                                 Instant.now());
 
-                checkoutEventPublisher.publishCheckoutRequested(event);
-
                 double total = items.stream()
                                 .mapToDouble(item -> item.unitPrice() * item.quantity())
                                 .sum();
+
+                // Flush real constraints before publishing. A broker exception rolls
+                // this database transaction back; this is not a distributed outbox.
+                checkouts.saveAndFlush(new CheckoutRequest(event, total));
+                checkoutEventPublisher.publishCheckoutRequested(event);
 
                 return new CheckoutResponseDTO(
                                 event.eventId(),

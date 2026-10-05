@@ -38,6 +38,8 @@ jobs:
           cache-dependency-path: |
             **/pom.xml
             **/.mvn/wrapper/maven-wrapper.properties
+      - name: Check Docker for PostgreSQL persistence suites
+        run: docker info
       - name: Verify tests and generate JaCoCo reports
         working-directory: ${{ matrix.service }}
         run: |
@@ -45,6 +47,15 @@ jobs:
           bash ./mvnw -B -ntp clean verify 2>&1 | tee ci-verify.log
           test -s target/site/jacoco/index.html
           test -s target/site/jacoco/jacoco.xml
+      - name: Assert no embedded H2 dependency
+        working-directory: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          bash ./mvnw -B -ntp dependency:tree -Dincludes=com.h2database:h2 -DoutputFile=target/h2-dependencies.txt
+          if grep -q 'com.h2database:h2' target/h2-dependencies.txt; then
+            echo 'H2 must not return to the runtime or test classpath'
+            exit 1
+          fi
       - name: Upload test results and coverage
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -59,7 +70,7 @@ jobs:
             ${{ matrix.service }}/target/site/jacoco/
             ${{ matrix.service }}/target/jacoco*.exec
       - name: Upload verified JAR for E2E
-        if: ${{ success() && (matrix.service == 'carrito' || matrix.service == 'orders' || matrix.service == 'notifications') }}
+        if: ${{ success() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: jar-${{ matrix.service }}
@@ -68,7 +79,7 @@ jobs:
           retention-days: 7
 
   messaging:
-    name: Contracts and RabbitMQ
+    name: Contracts, PostgreSQL and RabbitMQ
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -139,7 +150,7 @@ jobs:
           path: notifications/target
       - name: Check Docker
         run: docker info
-      - name: Verify checkout, SMTP delivery and ownership
+      - name: Verify PostgreSQL persistence, checkout, SMTP delivery and ownership
         run: |
           set -euo pipefail
           bash orders/mvnw -B -ntp -f tests/e2e/pom.xml -Pe2e clean verify 2>&1 | tee tests/e2e/ci-verify.log
@@ -155,10 +166,61 @@ jobs:
             tests/e2e/target/failsafe-reports/
             tests/e2e/target/e2e-logs/
 
+  compose:
+    name: PostgreSQL and full stack with Docker Compose
+    needs: services
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            **/pom.xml
+            **/.mvn/wrapper/maven-wrapper.properties
+      - name: Download all five verified service JARs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: jar-*
+          path: verified-jars
+      - name: Prepare verified runtime artifacts
+        run: |
+          set -euo pipefail
+          for service in auth catalog carrito orders notifications; do
+            mkdir -p "$service/target"
+            cp "verified-jars/jar-$service/"*.jar "$service/target/"
+          done
+      - name: Check Docker and Compose
+        run: |
+          set -euo pipefail
+          docker info
+          docker compose version
+      - name: Verify PostgreSQL isolation, authentication and persistent volumes
+        run: python3 tests/compose/verify_postgres_compose.py
+      - name: Verify real checkout, RabbitMQ, PostgreSQL and SMTP with Compose
+        run: python3 tests/compose/verify_stack_compose.py
+      - name: Upload Compose evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-compose
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            tests/compose/target/*.json
+            tests/compose/target/*.log
+
   test-gate:
     name: Backend tests passed
     if: ${{ always() }}
-    needs: [services, messaging, e2e]
+    needs: [services, messaging, e2e, compose]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -167,8 +229,10 @@ jobs:
           SERVICES_RESULT: ${{ needs.services.result }}
           MESSAGING_RESULT: ${{ needs.messaging.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          COMPOSE_RESULT: ${{ needs.compose.result }}
         run: |
           set -euo pipefail
           test "$SERVICES_RESULT" = success
           test "$MESSAGING_RESULT" = success
           test "$E2E_RESULT" = success
+          test "$COMPOSE_RESULT" = success

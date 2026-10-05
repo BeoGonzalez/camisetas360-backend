@@ -27,7 +27,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(AuthController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, com.camisetas360.auth.service.UserProfileService.class})
 @ImportAutoConfiguration(OAuth2ResourceServerAutoConfiguration.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class JwtSecurityIT {
@@ -42,6 +42,9 @@ class JwtSecurityIT {
 
     @Autowired
     private JwtDecoder decoder;
+
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.camisetas360.auth.repository.UserProfileRepository profiles;
 
     @DynamicPropertySource
     static void jwtProperties(DynamicPropertyRegistry properties) {
@@ -75,6 +78,7 @@ class JwtSecurityIT {
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("WWW-Authenticate", org.hamcrest.Matchers.startsWith("Bearer")))
                 .andExpect(jsonPath("$.email").doesNotExist());
+        verifyNoInteractions(profiles);
         
     }
 
@@ -91,7 +95,7 @@ class JwtSecurityIT {
     }
 
     static Stream<Arguments> invalidTokens() {
-        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "signature", "malformed")
+        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "signature", "malformed", "missing-subject")
                 .map(variant -> Arguments.of(path, variant)));
     }
 

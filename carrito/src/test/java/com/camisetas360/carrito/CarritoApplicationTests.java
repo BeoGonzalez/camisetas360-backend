@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "spring.autoconfigure.exclude=org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration"
 })
-class CarritoApplicationTests {
+class CarritoApplicationTests extends com.camisetas360.carrito.support.PostgresTestSupport {
 
     @Autowired
     private ApplicationContext context;
