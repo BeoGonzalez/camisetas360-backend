@@ -1,37 +1,92 @@
-name: Deploy to AWS ECR & EC2 via SSM
+name: Deploy Backend to Amazon ECS
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+
+  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: backend-deploy-main
+  group: backend-production-deploy
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1 # Cambia a tu región de AWS (ej. us-east-2, sa-east-1)
+  AWS_REGION: us-east-1
+  ECS_CLUSTER: camisetas360-backend-cluster
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  # ============================================================
+  # 1. Execute the complete backend CI before deployment
+  # ============================================================
   tests:
     name: Verify backend before deployment
     uses: ./.github/workflows/ci.yml
 
-  build-and-deploy:
+  # ============================================================
+  # 2. Build immutable Docker images and push them to ECR
+  # ============================================================
+  build-images:
+    name: Build ${{ matrix.service }}
     needs: tests
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.tests.result == 'success' }}
+
+    if: >-
+      ${{ needs.tests.result == 'success' }}
+
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: true
+      max-parallel: 3
+
+      matrix:
+        include:
+          - service: auth
+            repository: camisetas360-auth
+
+          - service: catalog
+            repository: camisetas360-catalog
+
+          - service: carrito
+            repository: camisetas360-carrito
+
+          - service: orders
+            repository: camisetas360-orders
+
+          - service: notifications
+            repository: camisetas360-notifications
+
+          - service: recommendation
+            repository: camisetas360-recommendation
+
+    environment:
+      name: production
+
     steps:
-      - name: Checkout code
+      - name: Checkout source code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Configure AWS Credentials
-        # Images contain the same JARs verified by the required CI workflow.
+      # ----------------------------------------------------------
+      # AWS Academy credentials
+      #
+      # AWS_SESSION_TOKEN is required because Academy credentials
+      # are temporary STS credentials.
+      #
+      # In a normal AWS production account, GitHub OIDC should
+      # replace long-lived/static GitHub secrets.
+      # ----------------------------------------------------------
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -39,68 +94,523 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          set -euo pipefail
+
+          aws sts get-caller-identity
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Download JARs verified by CI
+      # ----------------------------------------------------------
+      # Download exactly the JAR that passed ci.yml.
+      #
+      # We do NOT rebuild the JAR here.
+      # ----------------------------------------------------------
+      - name: Download verified JAR
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: jar-*
-          path: verified-jars
+          name: jar-${{ matrix.service }}
+          path: verified-jar
 
-      - name: Place verified JARs in Docker build contexts
+      - name: Prepare verified Docker build context
+        env:
+          SERVICE: ${{ matrix.service }}
         run: |
           set -euo pipefail
-          for service in auth catalog carrito orders notifications; do
-            mkdir -p "$service/target"
-            cp "verified-jars/jar-$service/"*.jar "$service/target/"
-          done
 
-      - name: Build, Tag and Push Auth
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: camisetas360-auth
-        run: |
-          docker build -t "$REGISTRY/$REPOSITORY:latest" ./auth
-          docker push "$REGISTRY/$REPOSITORY:latest"
+          mkdir -p "${SERVICE}/target"
 
-      - name: Build, Tag and Push Catalog
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: camisetas360-catalog
-        run: |
-          docker build -t "$REGISTRY/$REPOSITORY:latest" ./catalog
-          docker push "$REGISTRY/$REPOSITORY:latest"
+          mapfile -t jars < <(
+            find verified-jar \
+              -maxdepth 1 \
+              -type f \
+              -name '*.jar' \
+              ! -name '*-sources.jar' \
+              ! -name '*-javadoc.jar'
+          )
 
-      - name: Build, Tag and Push Carrito
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: camisetas360-carrito
-        run: |
-          docker build -t "$REGISTRY/$REPOSITORY:latest" ./carrito
-          docker push "$REGISTRY/$REPOSITORY:latest"
+          if [ "${#jars[@]}" -ne 1 ]; then
+            echo "Expected exactly one deployable JAR for ${SERVICE}."
+            printf 'Found: %s\n' "${jars[@]:-none}"
+            exit 1
+          fi
 
-      - name: Build, Tag and Push Orders and Notifications
+          cp "${jars[0]}" "${SERVICE}/target/app.jar"
+
+          test -s "${SERVICE}/target/app.jar"
+
+          echo "Verified artifact:"
+          ls -lh "${SERVICE}/target/app.jar"
+
+      # ----------------------------------------------------------
+      # Validate repository exists.
+      #
+      # Infrastructure creation belongs outside the deployment
+      # pipeline, so this workflow fails instead of silently
+      # creating an ECR repository.
+      # ----------------------------------------------------------
+      - name: Verify ECR repository
         env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ matrix.repository }}
         run: |
           set -euo pipefail
-          for service in orders notifications; do
-            docker build -t "$REGISTRY/camisetas360-$service:latest" "./$service"
-            docker push "$REGISTRY/camisetas360-$service:latest"
-          done
 
-      - name: Trigger Deployment on EC2 via AWS SSM
-        # The existing EC2 deployment is retained; EKS manifests are prepared separately.
+          aws ecr describe-repositories \
+            --repository-names "${REPOSITORY}" \
+            --region "${AWS_REGION}" \
+            >/dev/null
+
+      # ----------------------------------------------------------
+      # We use Git SHA instead of :latest.
+      #
+      # This provides:
+      # - immutable releases
+      # - auditability
+      # - deterministic rollback
+      # - compatibility with immutable ECR repositories
+      #
+      # The existence check makes reruns for the same commit
+      # idempotent.
+      # ----------------------------------------------------------
+      - name: Build and push immutable image
+        env:
+          SERVICE: ${{ matrix.service }}
+          REPOSITORY: ${{ matrix.repository }}
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:Name,Values=camisetas360-backend" \
-            --parameters 'commands=[
-              "cd /home/ec2-user/camisetas360",
-              "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}",
-              "docker compose pull",
-              "docker compose up -d --remove-orphans"
-            ]' \
-            --region ${{ env.AWS_REGION }}
+          set -euo pipefail
+
+          IMAGE="${REGISTRY}/${REPOSITORY}:${IMAGE_TAG}"
+
+          echo "Target image:"
+          echo "${IMAGE}"
+
+          if aws ecr describe-images \
+              --repository-name "${REPOSITORY}" \
+              --image-ids "imageTag=${IMAGE_TAG}" \
+              --region "${AWS_REGION}" \
+              >/dev/null 2>&1; then
+
+            echo "Image already exists in ECR."
+            echo "Reusing immutable image ${IMAGE}"
+
+          else
+            echo "Building ${SERVICE}..."
+
+            docker build \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+              --label "org.opencontainers.image.version=${IMAGE_TAG}" \
+              --tag "${IMAGE}" \
+              "./${SERVICE}"
+
+            echo "Pushing ${IMAGE}..."
+
+            docker push "${IMAGE}"
+          fi
+
+      - name: Verify image exists in ECR
+        env:
+          REPOSITORY: ${{ matrix.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          aws ecr describe-images \
+            --repository-name "${REPOSITORY}" \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --region "${AWS_REGION}" \
+            --query 'imageDetails[0].[imageDigest,imageSizeInBytes,imagePushedAt]' \
+            --output table
+
+  # ============================================================
+  # 3. Deploy the new images to ECS
+  #
+  # max-parallel = 1 is intentional.
+  #
+  # We currently have only:
+  #   2 x t8i.medium
+  #   = 4 vCPU / 8 GiB RAM gross
+  #
+  # Updating one microservice at a time reduces temporary
+  # capacity pressure during rolling deployments.
+  # ============================================================
+  deploy-services:
+    name: Deploy ${{ matrix.service }} to ECS
+    needs:
+      - tests
+      - build-images
+
+    if: >-
+      ${{
+        needs.tests.result == 'success' &&
+        needs.build-images.result == 'success'
+      }}
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+
+      matrix:
+        include:
+          - service: auth
+            repository: camisetas360-auth
+            task-family: camisetas360-auth
+            ecs-service: camisetas360-auth-service
+            container-name: auth
+
+          - service: catalog
+            repository: camisetas360-catalog
+            task-family: camisetas360-catalog
+            ecs-service: camisetas360-catalog-service
+            container-name: catalog
+
+          - service: carrito
+            repository: camisetas360-carrito
+            task-family: camisetas360-carrito
+            ecs-service: camisetas360-carrito-service
+            container-name: carrito
+
+          - service: orders
+            repository: camisetas360-orders
+            task-family: camisetas360-orders
+            ecs-service: camisetas360-orders-service
+            container-name: orders
+
+          - service: notifications
+            repository: camisetas360-notifications
+            task-family: camisetas360-notifications
+            ecs-service: camisetas360-notifications-service
+            container-name: notifications
+
+          - service: recommendation
+            repository: camisetas360-recommendation
+            task-family: camisetas360-recommendation
+            ecs-service: camisetas360-recommendation-service
+            container-name: recommendation
+
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ----------------------------------------------------------
+      # Confirm that the cluster/service/task definition actually
+      # exist before changing anything.
+      # ----------------------------------------------------------
+      - name: Verify ECS resources
+        env:
+          ECS_SERVICE: ${{ matrix.ecs-service }}
+          TASK_FAMILY: ${{ matrix.task-family }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking ECS cluster..."
+          aws ecs describe-clusters \
+            --clusters "${ECS_CLUSTER}" \
+            --region "${AWS_REGION}" \
+            --query 'clusters[0].[clusterName,status,registeredContainerInstancesCount]' \
+            --output table
+
+          echo "Checking ECS service..."
+          STATUS="$(
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --region "${AWS_REGION}" \
+              --query 'services[0].status' \
+              --output text
+          )"
+
+          if [ "${STATUS}" != "ACTIVE" ]; then
+            echo "ECS service ${ECS_SERVICE} is not ACTIVE."
+            exit 1
+          fi
+
+          echo "Checking task definition..."
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --region "${AWS_REGION}" \
+            >/dev/null
+
+      # ----------------------------------------------------------
+      # Build the exact ECR image URI corresponding to the
+      # current Git commit.
+      # ----------------------------------------------------------
+      - name: Resolve image URI
+        id: image
+        env:
+          REPOSITORY: ${{ matrix.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="$(
+            aws sts get-caller-identity \
+              --query Account \
+              --output text
+          )"
+
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPOSITORY}:${IMAGE_TAG}"
+
+          echo "Using image:"
+          echo "${IMAGE}"
+
+          # Make sure build-images really published it.
+          aws ecr describe-images \
+            --repository-name "${REPOSITORY}" \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --region "${AWS_REGION}" \
+            >/dev/null
+
+          echo "uri=${IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      # ----------------------------------------------------------
+      # Retrieve the latest ACTIVE task-definition revision.
+      #
+      # This preserves:
+      # - CPU
+      # - memory
+      # - ports
+      # - IAM roles
+      # - environment variables
+      # - secrets
+      # - CloudWatch logging
+      # - health checks
+      #
+      # Only the container image changes.
+      # ----------------------------------------------------------
+      - name: Download current ECS task definition
+        env:
+          TASK_FAMILY: ${{ matrix.task-family }}
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --region "${AWS_REGION}" \
+            --query 'taskDefinition' \
+            > current-task-definition.json
+
+      - name: Validate target container exists
+        env:
+          CONTAINER_NAME: ${{ matrix.container-name }}
+        run: |
+          set -euo pipefail
+
+          jq -e \
+            --arg container "${CONTAINER_NAME}" \
+            '.containerDefinitions[]
+             | select(.name == $container)' \
+            current-task-definition.json \
+            >/dev/null
+
+      # ----------------------------------------------------------
+      # AWS describe-task-definition returns several read-only
+      # properties which register-task-definition does not accept.
+      #
+      # Remove those fields and change only the image.
+      # ----------------------------------------------------------
+      - name: Render new ECS task definition
+        env:
+          CONTAINER_NAME: ${{ matrix.container-name }}
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          set -euo pipefail
+
+          jq \
+            --arg container "${CONTAINER_NAME}" \
+            --arg image "${IMAGE_URI}" \
+            '
+            del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )
+            |
+            (
+              .containerDefinitions[]
+              | select(.name == $container)
+              | .image
+            ) = $image
+            ' \
+            current-task-definition.json \
+            > new-task-definition.json
+
+          echo "Container image after rendering:"
+
+          jq \
+            --arg container "${CONTAINER_NAME}" \
+            '.containerDefinitions[]
+             | select(.name == $container)
+             | {
+                 name: .name,
+                 image: .image,
+                 cpu: .cpu,
+                 memory: .memory,
+                 memoryReservation: .memoryReservation
+               }' \
+            new-task-definition.json
+
+      # ----------------------------------------------------------
+      # Every deployment creates a new immutable ECS task
+      # definition revision.
+      # ----------------------------------------------------------
+      - name: Register new task definition revision
+        id: register
+        run: |
+          set -euo pipefail
+
+          TASK_DEFINITION_ARN="$(
+            aws ecs register-task-definition \
+              --cli-input-json file://new-task-definition.json \
+              --region "${AWS_REGION}" \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text
+          )"
+
+          echo "Registered:"
+          echo "${TASK_DEFINITION_ARN}"
+
+          echo "arn=${TASK_DEFINITION_ARN}" >> "${GITHUB_OUTPUT}"
+
+      # ----------------------------------------------------------
+      # ECS replaces the old task with a task based on the new
+      # revision. The EC2 hosts themselves are not touched.
+      # ----------------------------------------------------------
+      - name: Deploy task definition to ECS service
+        env:
+          ECS_SERVICE: ${{ matrix.ecs-service }}
+          TASK_DEFINITION_ARN: ${{ steps.register.outputs.arn }}
+        run: |
+          set -euo pipefail
+
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --task-definition "${TASK_DEFINITION_ARN}" \
+            --force-new-deployment \
+            --region "${AWS_REGION}" \
+            >/dev/null
+
+          echo "Deployment started:"
+          echo "Service: ${ECS_SERVICE}"
+          echo "Task definition: ${TASK_DEFINITION_ARN}"
+
+      # ----------------------------------------------------------
+      # The workflow does not report success simply because
+      # update-service returned HTTP 200.
+      #
+      # It waits until ECS says the service has stabilized.
+      # ----------------------------------------------------------
+      - name: Wait for ECS service to become stable
+        env:
+          ECS_SERVICE: ${{ matrix.ecs-service }}
+        run: |
+          set -euo pipefail
+
+          echo "Waiting for ${ECS_SERVICE}..."
+
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --region "${AWS_REGION}"
+
+          echo "${ECS_SERVICE} is stable."
+
+      - name: Verify deployed service
+        env:
+          ECS_SERVICE: ${{ matrix.ecs-service }}
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --region "${AWS_REGION}" \
+            --query '
+              services[0].{
+                Service:serviceName,
+                Status:status,
+                Desired:desiredCount,
+                Running:runningCount,
+                Pending:pendingCount,
+                TaskDefinition:taskDefinition
+              }
+            ' \
+            --output table
+
+  # ============================================================
+  # 4. Final deployment gate
+  # ============================================================
+  deployment-gate:
+    name: Backend deployment successful
+    needs:
+      - tests
+      - build-images
+      - deploy-services
+
+    if: ${{ always() }}
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require complete deployment success
+        env:
+          TESTS_RESULT: ${{ needs.tests.result }}
+          BUILD_RESULT: ${{ needs.build-images.result }}
+          DEPLOY_RESULT: ${{ needs.deploy-services.result }}
+        run: |
+          set -euo pipefail
+
+          echo "Tests:  ${TESTS_RESULT}"
+          echo "Build:  ${BUILD_RESULT}"
+          echo "Deploy: ${DEPLOY_RESULT}"
+
+          test "${TESTS_RESULT}" = "success"
+          test "${BUILD_RESULT}" = "success"
+          test "${DEPLOY_RESULT}" = "success"
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "## Camisetas360 Backend Deployment"
+            echo
+            echo "- Environment: production"
+            echo "- AWS region: ${AWS_REGION}"
+            echo "- ECS cluster: ${ECS_CLUSTER}"
+            echo "- Git commit: \`${GITHUB_SHA}\`"
+            echo "- Result: successful"
+            echo
+            echo "Services:"
+            echo "- auth"
+            echo "- catalog"
+            echo "- carrito"
+            echo "- orders"
+            echo "- notifications"
+            echo "- recommendation"
+          } >> "${GITHUB_STEP_SUMMARY}"

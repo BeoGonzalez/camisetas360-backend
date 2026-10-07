@@ -1,11 +1,15 @@
-name: Backend tests
+name: Backend CI
 
 on:
   pull_request:
+
   push:
-    # main calls this workflow from deploy-backend.yml before deployment.
-    branches-ignore: [main]
+    # main invokes this workflow from deploy-backend.yml.
+    branches-ignore:
+      - main
+
   workflow_dispatch:
+
   workflow_call:
 
 permissions:
@@ -15,47 +19,216 @@ defaults:
   run:
     shell: bash
 
+env:
+  JAVA_VERSION: "21"
+
 jobs:
+
+  # ============================================================
+  # SERVICE TESTS
+  #
+  # Every deployable Spring Boot service must:
+  #
+  # - compile
+  # - pass unit/integration tests
+  # - generate JaCoCo reports
+  # - avoid H2
+  # - produce exactly one deployable JAR
+  #
+  # The resulting JAR is the SAME artifact later consumed by
+  # E2E, Docker and the production deployment workflow.
+  # ============================================================
+
   services:
     name: Test ${{ matrix.service }}
+
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+
     strategy:
+      # We want diagnostics from every service instead of stopping
+      # after the first failure.
       fail-fast: false
+
       matrix:
-        service: [auth, catalog, carrito, orders, notifications]
+        service:
+          - auth
+          - catalog
+          - carrito
+          - orders
+          - notifications
+          - recommendation
+
     steps:
-      - name: Checkout
+
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      # ----------------------------------------------------------
+      # Fail early if a service is not deployment-ready.
+      # ----------------------------------------------------------
+
+      - name: Validate service structure
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
+          test -d "${SERVICE}"
+          test -f "${SERVICE}/pom.xml"
+          test -f "${SERVICE}/mvnw"
+          test -f "${SERVICE}/Dockerfile"
+
+          echo "Service structure validated: ${SERVICE}"
+
       - name: Set up Java 21 and Maven cache
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
           cache-dependency-path: |
-            **/pom.xml
-            **/.mvn/wrapper/maven-wrapper.properties
-      - name: Check Docker for PostgreSQL persistence suites
-        run: docker info
-      - name: Verify tests and generate JaCoCo reports
+            ${{ matrix.service }}/pom.xml
+            ${{ matrix.service }}/.mvn/wrapper/maven-wrapper.properties
+
+      - name: Show Java and Maven versions
         working-directory: ${{ matrix.service }}
         run: |
           set -euo pipefail
-          bash ./mvnw -B -ntp clean verify 2>&1 | tee ci-verify.log
+
+          java -version
+          bash ./mvnw --version
+
+      # Some persistence/integration suites depend on Testcontainers.
+      - name: Verify Docker availability
+        run: |
+          set -euo pipefail
+          docker info
+
+      # ----------------------------------------------------------
+      # Main Maven quality gate.
+      #
+      # clean verify should execute:
+      #
+      # - compilation
+      # - unit tests
+      # - integration tests configured in Maven
+      # - JaCoCo
+      # - any Maven checks configured by the project
+      # ----------------------------------------------------------
+
+      - name: Verify service
+        working-directory: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
+          bash ./mvnw \
+            -B \
+            -ntp \
+            clean verify \
+            2>&1 | tee ci-verify.log
+
+      # ----------------------------------------------------------
+      # Coverage evidence must actually exist.
+      #
+      # Coverage thresholds themselves should be configured in
+      # jacoco-maven-plugin so "mvn verify" enforces them.
+      # ----------------------------------------------------------
+
+      - name: Validate JaCoCo reports
+        working-directory: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
           test -s target/site/jacoco/index.html
           test -s target/site/jacoco/jacoco.xml
-      - name: Assert no embedded H2 dependency
+
+          echo "JaCoCo reports generated successfully."
+
+      # ----------------------------------------------------------
+      # PostgreSQL is the persistence technology.
+      #
+      # Prevent an accidental reintroduction of an embedded H2
+      # database into either runtime or test dependencies.
+      # ----------------------------------------------------------
+
+      - name: Assert no H2 dependency
         working-directory: ${{ matrix.service }}
         run: |
           set -euo pipefail
-          bash ./mvnw -B -ntp dependency:tree -Dincludes=com.h2database:h2 -DoutputFile=target/h2-dependencies.txt
+
+          bash ./mvnw \
+            -B \
+            -ntp \
+            dependency:tree \
+            -Dincludes=com.h2database:h2 \
+            -DoutputFile=target/h2-dependencies.txt
+
           if grep -q 'com.h2database:h2' target/h2-dependencies.txt; then
-            echo 'H2 must not return to the runtime or test classpath'
+            echo "ERROR: H2 must not exist in the runtime or test classpath."
+            cat target/h2-dependencies.txt
             exit 1
           fi
+
+          echo "No H2 dependency detected."
+
+      # ----------------------------------------------------------
+      # Select exactly one production JAR.
+      #
+      # This prevents Docker/deployment from accidentally choosing
+      # sources.jar, javadoc.jar or another unintended artifact.
+      # ----------------------------------------------------------
+
+      - name: Stage deployable JAR
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
+          ARTIFACT_DIR=".ci-artifacts/${SERVICE}"
+
+          rm -rf "${ARTIFACT_DIR}"
+          mkdir -p "${ARTIFACT_DIR}"
+
+          mapfile -t JARS < <(
+            find "${SERVICE}/target" \
+              -maxdepth 1 \
+              -type f \
+              -name '*.jar' \
+              ! -name '*-sources.jar' \
+              ! -name '*-javadoc.jar' \
+              | sort
+          )
+
+          if [ "${#JARS[@]}" -ne 1 ]; then
+            echo "ERROR: Expected exactly one deployable JAR for ${SERVICE}."
+            echo "Found ${#JARS[@]} candidate(s):"
+            printf '%s\n' "${JARS[@]:-none}"
+            exit 1
+          fi
+
+          JAR="${JARS[0]}"
+          JAR_NAME="$(basename "${JAR}")"
+
+          cp "${JAR}" "${ARTIFACT_DIR}/${JAR_NAME}"
+
+          (
+            cd "${ARTIFACT_DIR}"
+            sha256sum "${JAR_NAME}" > "${JAR_NAME}.sha256"
+          )
+
+          echo "Deployable artifact:"
+          ls -lh "${ARTIFACT_DIR}"
+
+          echo "SHA-256:"
+          cat "${ARTIFACT_DIR}/${JAR_NAME}.sha256"
+
+      # ----------------------------------------------------------
+      # Diagnostic artifacts are uploaded even after test failures.
+      # ----------------------------------------------------------
+
       - name: Upload test results and coverage
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -69,39 +242,72 @@ jobs:
             ${{ matrix.service }}/target/failsafe-reports/
             ${{ matrix.service }}/target/site/jacoco/
             ${{ matrix.service }}/target/jacoco*.exec
-      - name: Upload verified JAR for E2E
+            ${{ matrix.service }}/target/h2-dependencies.txt
+
+      # ----------------------------------------------------------
+      # Only a completely verified service receives a deployable
+      # JAR artifact.
+      #
+      # deploy-backend.yml consumes these jar-* artifacts.
+      # ----------------------------------------------------------
+
+      - name: Upload verified deployable JAR
         if: ${{ success() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: jar-${{ matrix.service }}
-          path: ${{ matrix.service }}/target/*.jar
-          if-no-files-found: error
           retention-days: 7
+          if-no-files-found: error
+          path: |
+            .ci-artifacts/${{ matrix.service }}/*.jar
+            .ci-artifacts/${{ matrix.service }}/*.sha256
+
+
+  # ============================================================
+  # MESSAGING CONTRACT / INTEGRATION TESTS
+  # ============================================================
 
   messaging:
     name: Contracts, PostgreSQL and RabbitMQ
+
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+
     steps:
-      - name: Checkout
+
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
       - name: Set up Java 21 and Maven cache
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
           cache-dependency-path: |
-            **/pom.xml
-            **/.mvn/wrapper/maven-wrapper.properties
-      - name: Check Docker
-        run: docker info
+            tests/messaging/pom.xml
+            orders/pom.xml
+            orders/.mvn/wrapper/maven-wrapper.properties
+
+      - name: Verify Docker availability
+        run: |
+          set -euo pipefail
+          docker info
+
       - name: Verify event contracts and RabbitMQ integration
         run: |
           set -euo pipefail
-          bash orders/mvnw -B -ntp -f tests/messaging/pom.xml -Prabbit clean verify 2>&1 | tee tests/messaging/ci-verify.log
+
+          bash orders/mvnw \
+            -B \
+            -ntp \
+            -f tests/messaging/pom.xml \
+            -Prabbit \
+            clean verify \
+            2>&1 | tee tests/messaging/ci-verify.log
+
       - name: Upload messaging results
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -114,46 +320,103 @@ jobs:
             tests/messaging/target/surefire-reports/
             tests/messaging/target/failsafe-reports/
 
+
+  # ============================================================
+  # BUSINESS FLOW E2E
+  #
+  # Uses the JARs already verified by the services job.
+  #
+  # It does NOT rebuild carrito/orders/notifications.
+  # ============================================================
+
   e2e:
     name: Checkout E2E
-    needs: services
+
+    needs:
+      - services
+
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+
     steps:
-      - name: Checkout
+
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
       - name: Set up Java 21 and Maven cache
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
           cache-dependency-path: |
-            **/pom.xml
-            **/.mvn/wrapper/maven-wrapper.properties
-      - name: Download verified carrito JAR
+            tests/e2e/pom.xml
+            orders/.mvn/wrapper/maven-wrapper.properties
+
+      # Download all verified JARs once instead of invoking the
+      # artifact action three separate times.
+      - name: Download verified service JARs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: jar-carrito
-          path: carrito/target
-      - name: Download verified orders JAR
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: jar-orders
-          path: orders/target
-      - name: Download verified notifications JAR
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: jar-notifications
-          path: notifications/target
-      - name: Check Docker
-        run: docker info
+          pattern: jar-*
+          path: verified-jars
+          merge-multiple: false
+
+      - name: Verify artifact checksums
+        run: |
+          set -euo pipefail
+
+          for artifact_dir in verified-jars/jar-*; do
+            echo "Verifying ${artifact_dir}"
+
+            (
+              cd "${artifact_dir}"
+              sha256sum -c ./*.sha256
+            )
+          done
+
+      - name: Prepare E2E runtime artifacts
+        run: |
+          set -euo pipefail
+
+          for service in carrito orders notifications; do
+            SOURCE_DIR="verified-jars/jar-${service}"
+
+            mapfile -t JARS < <(
+              find "${SOURCE_DIR}" \
+                -maxdepth 1 \
+                -type f \
+                -name '*.jar'
+            )
+
+            if [ "${#JARS[@]}" -ne 1 ]; then
+              echo "ERROR: Expected exactly one JAR for ${service}."
+              exit 1
+            fi
+
+            mkdir -p "${service}/target"
+            cp "${JARS[0]}" "${service}/target/"
+          done
+
+      - name: Verify Docker availability
+        run: |
+          set -euo pipefail
+          docker info
+
       - name: Verify PostgreSQL persistence, checkout, SMTP delivery and ownership
         run: |
           set -euo pipefail
-          bash orders/mvnw -B -ntp -f tests/e2e/pom.xml -Pe2e clean verify 2>&1 | tee tests/e2e/ci-verify.log
+
+          bash orders/mvnw \
+            -B \
+            -ntp \
+            -f tests/e2e/pom.xml \
+            -Pe2e \
+            clean verify \
+            2>&1 | tee tests/e2e/ci-verify.log
+
       - name: Upload E2E results and service logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -163,49 +426,113 @@ jobs:
           if-no-files-found: warn
           path: |
             tests/e2e/ci-verify.log
+            tests/e2e/target/surefire-reports/
             tests/e2e/target/failsafe-reports/
             tests/e2e/target/e2e-logs/
 
+
+  # ============================================================
+  # DOCKER COMPOSE INTEGRATION
+  #
+  # Tests the local integration topology using exactly the
+  # already-verified Spring Boot artifacts.
+  # ============================================================
+
   compose:
-    name: PostgreSQL and full stack with Docker Compose
-    needs: services
+    name: PostgreSQL and stack with Docker Compose
+
+    needs:
+      - services
+
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+
     steps:
-      - name: Checkout
+
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
       - name: Set up Java 21 and Maven cache
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
           cache-dependency-path: |
             **/pom.xml
             **/.mvn/wrapper/maven-wrapper.properties
-      - name: Download all five verified service JARs
+
+      - name: Download all verified service JARs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: jar-*
           path: verified-jars
+          merge-multiple: false
+
+      - name: Verify artifact checksums
+        run: |
+          set -euo pipefail
+
+          for artifact_dir in verified-jars/jar-*; do
+            echo "Verifying ${artifact_dir}"
+
+            (
+              cd "${artifact_dir}"
+              sha256sum -c ./*.sha256
+            )
+          done
+
       - name: Prepare verified runtime artifacts
         run: |
           set -euo pipefail
-          for service in auth catalog carrito orders notifications; do
-            mkdir -p "$service/target"
-            cp "verified-jars/jar-$service/"*.jar "$service/target/"
+
+          for service in \
+            auth \
+            catalog \
+            carrito \
+            orders \
+            notifications \
+            recommendation
+          do
+            SOURCE_DIR="verified-jars/jar-${service}"
+
+            mapfile -t JARS < <(
+              find "${SOURCE_DIR}" \
+                -maxdepth 1 \
+                -type f \
+                -name '*.jar'
+            )
+
+            if [ "${#JARS[@]}" -ne 1 ]; then
+              echo "ERROR: Expected exactly one JAR for ${service}."
+              exit 1
+            fi
+
+            mkdir -p "${service}/target"
+            cp "${JARS[0]}" "${service}/target/"
+
+            echo "Prepared verified JAR for ${service}"
           done
-      - name: Check Docker and Compose
+
+      - name: Verify Docker and Docker Compose
         run: |
           set -euo pipefail
+
           docker info
           docker compose version
+
       - name: Verify PostgreSQL isolation, authentication and persistent volumes
-        run: python3 tests/compose/verify_postgres_compose.py
-      - name: Verify real checkout, RabbitMQ, PostgreSQL and SMTP with Compose
-        run: python3 tests/compose/verify_stack_compose.py
+        run: |
+          set -euo pipefail
+          python3 tests/compose/verify_postgres_compose.py
+
+      - name: Verify checkout, RabbitMQ, PostgreSQL and SMTP with Compose
+        run: |
+          set -euo pipefail
+          python3 tests/compose/verify_stack_compose.py
+
       - name: Upload Compose evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -217,13 +544,50 @@ jobs:
             tests/compose/target/*.json
             tests/compose/target/*.log
 
+
+  # ============================================================
+  # FINAL QUALITY GATE
+  #
+  # This is deliberately explicit.
+  #
+  # A skipped, cancelled or failed suite MUST NOT be interpreted
+  # as a successful backend verification.
+  # ============================================================
+
   test-gate:
     name: Backend tests passed
+
     if: ${{ always() }}
-    needs: [services, messaging, e2e, compose]
+
+    needs:
+      - services
+      - messaging
+      - e2e
+      - compose
+
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+
     steps:
+
+      - name: Show quality gate results
+        env:
+          SERVICES_RESULT: ${{ needs.services.result }}
+          MESSAGING_RESULT: ${{ needs.messaging.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          COMPOSE_RESULT: ${{ needs.compose.result }}
+        run: |
+          {
+            echo "## Camisetas360 Backend CI"
+            echo
+            echo "| Suite | Result |"
+            echo "|---|---|"
+            echo "| Services | ${SERVICES_RESULT} |"
+            echo "| Messaging | ${MESSAGING_RESULT} |"
+            echo "| E2E | ${E2E_RESULT} |"
+            echo "| Docker Compose | ${COMPOSE_RESULT} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Require every test suite to succeed
         env:
           SERVICES_RESULT: ${{ needs.services.result }}
@@ -232,7 +596,10 @@ jobs:
           COMPOSE_RESULT: ${{ needs.compose.result }}
         run: |
           set -euo pipefail
-          test "$SERVICES_RESULT" = success
-          test "$MESSAGING_RESULT" = success
-          test "$E2E_RESULT" = success
-          test "$COMPOSE_RESULT" = success
+
+          test "${SERVICES_RESULT}" = "success"
+          test "${MESSAGING_RESULT}" = "success"
+          test "${E2E_RESULT}" = "success"
+          test "${COMPOSE_RESULT}" = "success"
+
+          echo "All backend quality gates passed."
