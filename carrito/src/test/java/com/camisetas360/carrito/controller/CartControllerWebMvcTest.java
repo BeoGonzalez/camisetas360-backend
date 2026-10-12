@@ -172,7 +172,7 @@ class CartControllerWebMvcTest {
     private static JwtRequestPostProcessor authorized() {
         return jwt().jwt(token -> token
                         .claim("preferred_username", EMAIL)
-                        .claim("oid", "user-1").claim("tid", "tenant-1").claim("name", "Buyer"))
+                        .claim("oid", "22222222-2222-2222-2222-222222222222").claim("tid", "11111111-1111-1111-1111-111111111111").claim("name", "Buyer"))
                 .authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority("ROLE_CUSTOMER"));
     }
 

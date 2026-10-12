@@ -10,6 +10,12 @@ public record OrderCreatedEvent(
         String userEmail,
         Double totalAmount,
         List<OrderItemEvent> items,
-        Instant occurredAt
+        Instant occurredAt,
+        UUID tenantId,
+        UUID objectId
 ) {
+    // Legacy wire payloads have unknown ownership; they are never inferred from email.
+    public OrderCreatedEvent(UUID eventId, Long orderId, String userEmail, Double totalAmount, List<OrderItemEvent> items, Instant occurredAt) {
+        this(eventId, orderId, userEmail, totalAmount, items, occurredAt, null, null);
+    }
 }

@@ -37,7 +37,7 @@ class CheckoutPersistenceIT extends PostgresTestSupport {
     @BeforeEach void initialize() {
         checkouts.deleteAll();
         var jwt = Jwt.withTokenValue("test").header("alg", "none").subject("buyer")
-                .claim("preferred_username", "buyer@example.test").build();
+                .claim("preferred_username", "buyer@example.test").claim("tid","11111111-1111-1111-1111-111111111111").claim("oid","22222222-2222-2222-2222-222222222222").build();
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
     }
     @AfterEach void clearIdentity() { SecurityContextHolder.clearContext(); }
@@ -74,7 +74,7 @@ class CheckoutPersistenceIT extends PostgresTestSupport {
     }
 
     @Test void flywayCreatesTheUuidKeyForeignKeyAndRequiredFields() {
-        assertThat(jdbc.queryForObject("SELECT version FROM flyway_schema_history WHERE success", String.class)).isEqualTo("1");
+        assertThat(jdbc.queryForList("SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class)).containsExactly("1","2");
         assertThat(jdbc.queryForObject("SELECT data_type FROM information_schema.columns WHERE table_name='checkout_requests' AND column_name='id'", String.class)).isEqualTo("uuid");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO checkout_request_items (checkout_id,sku,quantity,unit_price) VALUES (?, 'missing', 1, 10)", UUID.randomUUID()))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);

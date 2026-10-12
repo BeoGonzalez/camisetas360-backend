@@ -11,6 +11,7 @@ import com.camisetas360.orders.model.Order;
 import com.camisetas360.orders.model.OrderItem;
 import com.camisetas360.orders.model.OrderStatus;
 import com.camisetas360.orders.repository.OrderRepository;
+import com.camisetas360.orders.security.EntraIdentity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,9 +33,16 @@ public class OrderService {
         this.orderEventPublisher = orderEventPublisher;
     }
 
+    @Transactional
     public Order createOrder(CheckoutRequestedEvent event) {
 
+        if (event.tenantId() == null || event.objectId() == null) {
+            throw new org.springframework.amqp.AmqpRejectAndDontRequeueException(
+                    "Checkout requires immutable ownership; legacy messages require verified identity enrichment");
+        }
         Order order = new Order();
+        order.setTenantId(event.tenantId());
+        order.setObjectId(event.objectId());
 
         order.setUserEmail(event.userEmail());
         order.setStatus(OrderStatus.CREATED);
@@ -79,7 +87,9 @@ public class OrderService {
                 savedOrder.getUserEmail(),
                 savedOrder.getTotalAmount(),
                 orderItems,
-                Instant.now()
+                Instant.now(),
+                savedOrder.getTenantId(),
+                savedOrder.getObjectId()
         );
 
         orderEventPublisher.publishOrderCreated(orderCreatedEvent);
@@ -88,31 +98,21 @@ public class OrderService {
     }
 
     @Transactional(readOnly = true)
-    public OrderResponseDTO findById(Long orderId, String userEmail) {
+    public OrderResponseDTO findById(Long orderId, EntraIdentity owner) {
+        Order order = orderRepository.findById(orderId).orElseThrow(() -> new OrderNotFoundException(orderId));
+        if (!owner.tenantId().equals(order.getTenantId()) || !owner.objectId().equals(order.getObjectId())) {
+            throw new OrderNotFoundException(orderId);
+        }
+        return toResponse(order);
+    }
 
-    Order order = orderRepository.findById(orderId)
-        .orElseThrow(() ->
-                new OrderNotFoundException(orderId)
-        );
+    @Transactional(readOnly = true)
+    public List<OrderResponseDTO> findByOwner(EntraIdentity owner) {
+        return orderRepository.findByTenantIdAndObjectIdOrderByCreatedAtDesc(owner.tenantId(), owner.objectId())
+                .stream().map(this::toResponse).toList();
+    }
 
-    if (!order.getUserEmail().equalsIgnoreCase(userEmail)) {
-    throw new OrderNotFoundException(orderId);
-}
-
-    return toResponse(order);
-}
-
-@Transactional(readOnly = true)
-public List<OrderResponseDTO> findByUserEmail(String userEmail) {
-
-    return orderRepository
-            .findByUserEmailOrderByCreatedAtDesc(userEmail)
-            .stream()
-            .map(this::toResponse)
-            .toList();
-}
-
-private OrderResponseDTO toResponse(Order order) {
+    private OrderResponseDTO toResponse(Order order) {
 
     List<OrderItemResponseDTO> items = order.getItems()
             .stream()

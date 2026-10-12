@@ -34,6 +34,7 @@ import static org.mockito.Mockito.*;
 @WebMvcTest(controllers = OrderController.class)
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 class OrderControllerWebMvcTest {
+    private static final com.camisetas360.orders.security.EntraIdentity OWNER = new com.camisetas360.orders.security.EntraIdentity(java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
 
     private static final String PATH = "/api/v1/orders";
     private static final String EMAIL = "buyer@example.test";
@@ -52,34 +53,34 @@ class OrderControllerWebMvcTest {
     // MVC-ORD-001
     @Test
     void getMyOrders_shouldPassClaimAndSerializeOrders_whenAuthorized() throws Exception {
-        when(service.findByUserEmail(EMAIL)).thenReturn(List.of(order()));
+        when(service.findByOwner(OWNER)).thenReturn(List.of(order()));
         mvc.perform(request(PATH).with(authorized()))
                 .andExpect(status().isOk())
                 .andExpect(content().json("[" + ORDER_JSON + "]"))
                 .andExpect(jsonPath("$[0].items[0].order").doesNotExist());
-        verify(service).findByUserEmail(EMAIL);
+        verify(service).findByOwner(OWNER);
         verifyNoMoreInteractions(service);
     }
 
     // MVC-ORD-001
     @Test
     void getMyOrders_shouldReturnEmptyArray_whenUserHasNoOrders() throws Exception {
-        when(service.findByUserEmail(EMAIL)).thenReturn(List.of());
+        when(service.findByOwner(OWNER)).thenReturn(List.of());
         mvc.perform(request(PATH).with(authorized()))
                 .andExpect(status().isOk()).andExpect(content().json("[]"));
-        verify(service).findByUserEmail(EMAIL);
+        verify(service).findByOwner(OWNER);
         verifyNoMoreInteractions(service);
     }
 
     // MVC-ORD-002
     @Test
     void getOrder_shouldPassIdAndClaim_whenAuthorized() throws Exception {
-        when(service.findById(42L, EMAIL)).thenReturn(order());
+        when(service.findById(42L, OWNER)).thenReturn(order());
         mvc.perform(request(PATH + "/42").with(authorized()))
                 .andExpect(status().isOk())
                 .andExpect(content().json(ORDER_JSON))
                 .andExpect(jsonPath("$.items[0].order").doesNotExist());
-        verify(service).findById(42L, EMAIL);
+        verify(service).findById(42L, OWNER);
         verifyNoMoreInteractions(service);
     }
 
@@ -87,7 +88,7 @@ class OrderControllerWebMvcTest {
     @ParameterizedTest
     @ValueSource(longs = {42L, 99L})
     void getOrder_shouldReturn404WithoutOrderData_whenServiceRejectsLookup(long id) throws Exception {
-        when(service.findById(id, EMAIL)).thenThrow(new OrderNotFoundException(id));
+        when(service.findById(id, OWNER)).thenThrow(new OrderNotFoundException(id));
         mvc.perform(request(PATH + "/" + id).with(authorized()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
@@ -96,7 +97,7 @@ class OrderControllerWebMvcTest {
                 .andExpect(jsonPath("$.timestamp").isString())
                 .andExpect(jsonPath("$.userEmail").doesNotExist())
                 .andExpect(jsonPath("$.items").doesNotExist());
-        verify(service).findById(id, EMAIL);
+        verify(service).findById(id, OWNER);
         verifyNoMoreInteractions(service);
     }
 
@@ -182,7 +183,7 @@ class OrderControllerWebMvcTest {
     private static JwtRequestPostProcessor authorized() {
         return jwt().jwt(token -> token
                         .claim("preferred_username", EMAIL)
-                        .claim("oid", "user-1").claim("tid", "tenant-1").claim("name", "Buyer"))
+                        .claim("oid", "22222222-2222-2222-2222-222222222222").claim("tid", "11111111-1111-1111-1111-111111111111").claim("name", "Buyer"))
                 .authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority("ROLE_CUSTOMER"));
     }
 

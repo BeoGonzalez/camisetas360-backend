@@ -1,0 +1,93 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Private RabbitMQ OSS on an existing ECS EC2 host with retained, externally mounted EBS storage",
+  "Parameters": {
+    "VpcId": {"Type": "AWS::EC2::VPC::Id"},
+    "PrivateSubnetId": {"Type": "AWS::EC2::Subnet::Id"},
+    "ClusterArn": {"Type": "String"},
+    "BrokerInstanceId": {"Type": "AWS::EC2::Instance::Id", "Description": "ECS EC2 host with EBS mounted at /srv/rabbitmq/data; same AZ as private subnet"},
+    "ExecutionRoleArn": {"Type": "String", "Description": "Existing ECS execution role authorized for ECR, logs and the credential secret (and KMS if needed)"},
+    "BrokerImage": {"Type": "String", "AllowedPattern": ".+@sha256:[a-f0-9]{64}", "Description": "ECR digest of the RabbitMQ image built from this directory"},
+    "CredentialSecretArn": {"Type": "String", "AllowedPattern": "arn:aws[a-z-]*:secretsmanager:.+:secret:.+", "Description": "Secret JSON containing username and password; no values in the template"},
+    "Vhost": {"Type": "String", "Default": "/camisetas360"},
+    "PrivateNamespaceId": {"Type": "String", "AllowedPattern": "ns-[a-z0-9]+", "Description": "Existing PRIVATE DNS Cloud Map namespace in this VPC"},
+    "PrivateNamespaceName": {"Type": "String", "Description": "DNS suffix of that private namespace"},
+    "OrdersSecurityGroupId": {"Type": "AWS::EC2::SecurityGroup::Id"},
+    "RecommendationSecurityGroupId": {"Type": "AWS::EC2::SecurityGroup::Id"},
+    "NotificationsSecurityGroupId": {"Type": "AWS::EC2::SecurityGroup::Id"},
+    "CarritoSecurityGroupId": {"Type": "AWS::EC2::SecurityGroup::Id"}
+  },
+  "Resources": {
+    "BrokerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "RabbitMQ private AMQP only; management has no inbound rule",
+        "VpcId": {"Ref": "VpcId"},
+        "SecurityGroupIngress": [],
+        "SecurityGroupEgress": [{"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "127.0.0.1/32", "Description": "Suppress default allow-all egress; broker only responds to established connections"}]
+      }
+    },
+    "OrdersAmqp": {"Type": "AWS::EC2::SecurityGroupIngress", "Properties": {"GroupId": {"Ref": "BrokerSecurityGroup"}, "IpProtocol": "tcp", "FromPort": 5672, "ToPort": 5672, "SourceSecurityGroupId": {"Ref": "OrdersSecurityGroupId"}}},
+    "RecommendationAmqp": {"Type": "AWS::EC2::SecurityGroupIngress", "Properties": {"GroupId": {"Ref": "BrokerSecurityGroup"}, "IpProtocol": "tcp", "FromPort": 5672, "ToPort": 5672, "SourceSecurityGroupId": {"Ref": "RecommendationSecurityGroupId"}}},
+    "NotificationsAmqp": {"Type": "AWS::EC2::SecurityGroupIngress", "Properties": {"GroupId": {"Ref": "BrokerSecurityGroup"}, "IpProtocol": "tcp", "FromPort": 5672, "ToPort": 5672, "SourceSecurityGroupId": {"Ref": "NotificationsSecurityGroupId"}}},
+    "CarritoAmqp": {"Type": "AWS::EC2::SecurityGroupIngress", "Properties": {"GroupId": {"Ref": "BrokerSecurityGroup"}, "IpProtocol": "tcp", "FromPort": 5672, "ToPort": 5672, "SourceSecurityGroupId": {"Ref": "CarritoSecurityGroupId"}}},
+    "BrokerLogs": {"Type": "AWS::Logs::LogGroup", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain", "Properties": {"RetentionInDays": 30}},
+    "BrokerDiscovery": {
+      "Type": "AWS::ServiceDiscovery::Service",
+      "Properties": {
+        "Name": "rabbitmq",
+        "NamespaceId": {"Ref": "PrivateNamespaceId"},
+        "DnsConfig": {"RoutingPolicy": "MULTIVALUE", "DnsRecords": [{"Type": "A", "TTL": 10}]},
+        "HealthCheckCustomConfig": {"FailureThreshold": 1}
+      }
+    },
+    "BrokerTask": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "RequiresCompatibilities": ["EC2"],
+        "NetworkMode": "awsvpc",
+        "Cpu": "1024",
+        "Memory": "4096",
+        "ExecutionRoleArn": {"Ref": "ExecutionRoleArn"},
+        "Volumes": [{"Name": "rabbitmq-data", "Host": {"SourcePath": "/srv/rabbitmq/data"}}],
+        "ContainerDefinitions": [{
+          "Name": "rabbitmq",
+          "Image": {"Ref": "BrokerImage"},
+          "Essential": true,
+          "StopTimeout": 120,
+          "EntryPoint": ["/bin/sh", "-ec"],
+          "Command": ["test -f /var/lib/rabbitmq/.rabbitmq-volume || { echo 'ERROR: persistent EBS volume marker missing'; exit 1; }; exec /usr/local/bin/docker-entrypoint.sh rabbitmq-server"],
+          "PortMappings": [{"ContainerPort": 5672, "Protocol": "tcp"}, {"ContainerPort": 15672, "Protocol": "tcp"}],
+          "MountPoints": [{"SourceVolume": "rabbitmq-data", "ContainerPath": "/var/lib/rabbitmq", "ReadOnly": false}],
+          "Environment": [{"Name": "RABBITMQ_NODENAME", "Value": "rabbit@localhost"}, {"Name": "RABBITMQ_DEFAULT_VHOST", "Value": {"Ref": "Vhost"}}],
+          "Secrets": [
+            {"Name": "RABBITMQ_DEFAULT_USER", "ValueFrom": {"Fn::Sub": "${CredentialSecretArn}:username::"}},
+            {"Name": "RABBITMQ_DEFAULT_PASS", "ValueFrom": {"Fn::Sub": "${CredentialSecretArn}:password::"}}
+          ],
+          "HealthCheck": {"Command": ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_running"], "Interval": 30, "Timeout": 15, "Retries": 3, "StartPeriod": 120},
+          "LogConfiguration": {"LogDriver": "awslogs", "Options": {"awslogs-group": {"Ref": "BrokerLogs"}, "awslogs-region": {"Ref": "AWS::Region"}, "awslogs-stream-prefix": "rabbitmq"}}
+        }]
+      }
+    },
+    "BrokerService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "Cluster": {"Ref": "ClusterArn"},
+        "LaunchType": "EC2",
+        "DesiredCount": 1,
+        "TaskDefinition": {"Ref": "BrokerTask"},
+        "DeploymentConfiguration": {"MinimumHealthyPercent": 0, "MaximumPercent": 100, "DeploymentCircuitBreaker": {"Enable": true, "Rollback": true}},
+        "PlacementConstraints": [{"Type": "memberOf", "Expression": {"Fn::Sub": "ec2InstanceId == ${BrokerInstanceId}"}}],
+        "NetworkConfiguration": {"AwsvpcConfiguration": {"AssignPublicIp": "DISABLED", "Subnets": [{"Ref": "PrivateSubnetId"}], "SecurityGroups": [{"Ref": "BrokerSecurityGroup"}]}},
+        "ServiceRegistries": [{"RegistryArn": {"Fn::GetAtt": ["BrokerDiscovery", "Arn"]}}]
+      }
+    }
+  },
+  "Outputs": {
+    "RabbitMqHost": {"Value": {"Fn::Sub": "rabbitmq.${PrivateNamespaceName}"}},
+    "RabbitMqPort": {"Value": "5672"},
+    "RabbitMqVhost": {"Value": {"Ref": "Vhost"}},
+    "BrokerSecurityGroupId": {"Value": {"Ref": "BrokerSecurityGroup"}},
+    "BrokerServiceName": {"Value": {"Fn::GetAtt": ["BrokerService", "Name"]}}
+  }
+}

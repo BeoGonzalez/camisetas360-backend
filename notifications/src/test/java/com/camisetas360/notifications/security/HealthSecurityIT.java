@@ -25,6 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(classes = HealthSecurityIT.HealthTestApplication.class, properties = {
         "management.health.defaults.enabled=false",
+        "management.endpoint.health.group.readiness.include=readinessState",
         "app.cors.allowed-origin-patterns[0]=https://frontend.example.test"
 })
 @AutoConfigureMockMvc

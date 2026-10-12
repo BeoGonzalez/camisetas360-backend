@@ -7,6 +7,7 @@ import com.camisetas360.carrito.messaging.event.CheckoutItemEvent;
 import com.camisetas360.carrito.messaging.event.CheckoutRequestedEvent;
 import com.camisetas360.carrito.model.CheckoutRequest;
 import com.camisetas360.carrito.repository.CheckoutRequestRepository;
+import com.camisetas360.carrito.security.EntraIdentity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -35,11 +36,12 @@ public class CartService {
                                 .getAuthentication()
                                 .getPrincipal();
 
-                String userEmail = jwt.getClaimAsString("preferred_username");
-
-                if (userEmail == null || userEmail.isBlank()) {
-                        throw new IllegalStateException(
-                                        "El token JWT no contiene el claim preferred_username");
+                var identity = EntraIdentity.from(jwt);
+                String userEmail = jwt.getClaimAsString("email");
+                if (userEmail == null || userEmail.isBlank()) userEmail = jwt.getClaimAsString("preferred_username");
+                if (userEmail == null || userEmail.chars().anyMatch(Character::isWhitespace)
+                        || !userEmail.matches("[^@]+@[^@]+[.][^@]+")) {
+                        throw new MissingContactEmailException();
                 }
 
                 List<CheckoutItemEvent> items = request.items()
@@ -54,7 +56,7 @@ public class CartService {
                                 UUID.randomUUID(),
                                 userEmail,
                                 items,
-                                Instant.now());
+                                Instant.now(), identity.tenantId(), identity.objectId());
 
                 double total = items.stream()
                                 .mapToDouble(item -> item.unitPrice() * item.quantity())

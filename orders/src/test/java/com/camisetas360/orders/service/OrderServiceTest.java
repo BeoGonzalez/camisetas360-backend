@@ -39,6 +39,7 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
+    private static final com.camisetas360.orders.security.EntraIdentity OWNER = new com.camisetas360.orders.security.EntraIdentity(java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
 
     private static final Instant CREATED_AT = Instant.parse("2026-01-01T12:00:00Z");
     private static final String EMAIL = "buyer@example.test";
@@ -106,7 +107,7 @@ class OrderServiceTest {
         when(repository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         var event = new CheckoutRequestedEvent(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
-                EMAIL, items, CREATED_AT);
+                EMAIL, items, CREATED_AT, java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
 
         var result = service.createOrder(event);
 
@@ -186,7 +187,7 @@ class OrderServiceTest {
     void findById_shouldReturnOwnOrder_whenEmailMatchesIgnoringCase(String requestingEmail) {
         when(repository.findById(42L)).thenReturn(Optional.of(storedOrder(42L)));
 
-        assertThat(service.findById(42L, requestingEmail)).isEqualTo(expectedResponse(42L));
+        assertThat(service.findById(42L, com.camisetas360.orders.security.EntraIdentity.from(org.springframework.security.oauth2.jwt.Jwt.withTokenValue("test").header("alg","none").claim("tid",OWNER.tenantId().toString()).claim("oid",OWNER.objectId().toString()).claim("preferred_username",requestingEmail).build()))).isEqualTo(expectedResponse(42L));
 
         verify(repository).findById(42L);
         verifyNoMoreInteractions(repository);
@@ -199,7 +200,7 @@ class OrderServiceTest {
         when(repository.findById(42L)).thenReturn(Optional.of(storedOrder(42L)));
 
         assertThat(assertThrows(OrderNotFoundException.class,
-                () -> service.findById(42L, "another@example.test")))
+                () -> service.findById(42L, new com.camisetas360.orders.security.EntraIdentity(OWNER.tenantId(),java.util.UUID.fromString("33333333-3333-3333-3333-333333333333")))))
                 .hasMessage("Order not found: 42");
 
         verify(repository).findById(42L);
@@ -213,7 +214,7 @@ class OrderServiceTest {
         when(repository.findById(42L)).thenReturn(Optional.empty());
 
         assertThat(assertThrows(OrderNotFoundException.class,
-                () -> service.findById(42L, EMAIL))).hasMessage("Order not found: 42");
+                () -> service.findById(42L, OWNER))).hasMessage("Order not found: 42");
 
         verify(repository).findById(42L);
         verifyNoMoreInteractions(repository);
@@ -223,13 +224,13 @@ class OrderServiceTest {
     // UT-ORD-008
     @Test
     void findByUserEmail_shouldMapOrdersInRepositoryOrder_whenOrdersExist() {
-        when(repository.findByUserEmailOrderByCreatedAtDesc(EMAIL))
+        when(repository.findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId()))
                 .thenReturn(List.of(storedOrder(43L), storedOrder(42L)));
 
-        assertThat(service.findByUserEmail(EMAIL))
+        assertThat(service.findByOwner(OWNER))
                 .containsExactly(expectedResponse(43L), expectedResponse(42L));
 
-        verify(repository).findByUserEmailOrderByCreatedAtDesc(EMAIL);
+        verify(repository).findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId());
         verifyNoMoreInteractions(repository);
         verifyNoInteractions(publisher);
     }
@@ -237,11 +238,11 @@ class OrderServiceTest {
     // UT-ORD-008
     @Test
     void findByUserEmail_shouldReturnEmptyList_whenUserHasNoOrders() {
-        when(repository.findByUserEmailOrderByCreatedAtDesc(EMAIL)).thenReturn(List.of());
+        when(repository.findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId())).thenReturn(List.of());
 
-        assertThat(service.findByUserEmail(EMAIL)).isEmpty();
+        assertThat(service.findByOwner(OWNER)).isEmpty();
 
-        verify(repository).findByUserEmailOrderByCreatedAtDesc(EMAIL);
+        verify(repository).findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId());
         verifyNoMoreInteractions(repository);
         verifyNoInteractions(publisher);
     }
@@ -253,7 +254,7 @@ class OrderServiceTest {
         when(repository.findById(42L)).thenThrow(failure);
 
         assertThat(assertThrows(DataAccessResourceFailureException.class,
-                () -> service.findById(42L, EMAIL))).isSameAs(failure);
+                () -> service.findById(42L, OWNER))).isSameAs(failure);
 
         verify(repository).findById(42L);
         verifyNoMoreInteractions(repository);
@@ -264,12 +265,12 @@ class OrderServiceTest {
     @Test
     void findByUserEmail_shouldPropagateFailure_whenRepositoryFails() {
         var failure = new DataAccessResourceFailureException("read failed");
-        when(repository.findByUserEmailOrderByCreatedAtDesc(EMAIL)).thenThrow(failure);
+        when(repository.findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId())).thenThrow(failure);
 
         assertThat(assertThrows(DataAccessResourceFailureException.class,
-                () -> service.findByUserEmail(EMAIL))).isSameAs(failure);
+                () -> service.findByOwner(OWNER))).isSameAs(failure);
 
-        verify(repository).findByUserEmailOrderByCreatedAtDesc(EMAIL);
+        verify(repository).findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId());
         verifyNoMoreInteractions(repository);
         verifyNoInteractions(publisher);
     }
@@ -278,7 +279,7 @@ class OrderServiceTest {
         return new CheckoutRequestedEvent(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 EMAIL, List.of(new CheckoutItemEvent("SKU-A", 2, 19.5),
-                new CheckoutItemEvent("SKU-B", 3, 10.0)), CREATED_AT);
+                new CheckoutItemEvent("SKU-B", 3, 10.0)), CREATED_AT, java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
     }
 
     private static Order storedOrder(Long id) {
@@ -286,6 +287,7 @@ class OrderServiceTest {
         // IDENTITY is assigned by JPA in production; this fixture stays a real entity.
         ReflectionTestUtils.setField(order, "id", id);
         order.setUserEmail(EMAIL);
+        order.setTenantId(OWNER.tenantId()); order.setObjectId(OWNER.objectId());
         order.setStatus(OrderStatus.CREATED);
         order.setCreatedAt(CREATED_AT);
         order.setTotalAmount(69.0);

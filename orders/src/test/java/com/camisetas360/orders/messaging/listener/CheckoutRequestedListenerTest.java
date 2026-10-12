@@ -57,6 +57,6 @@ class CheckoutRequestedListenerTest {
         return new CheckoutRequestedEvent(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 "buyer@example.test", List.of(new CheckoutItemEvent("SKU-A", 2, 19.5)),
-                Instant.parse("2026-01-01T12:00:00Z"));
+                Instant.parse("2026-01-01T12:00:00Z"), java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
     }
 }

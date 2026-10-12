@@ -24,6 +24,12 @@ class EventContractTest {
     @TempDir
     Path transport;
 
+    @Test
+    void checkoutCarriesStableIdentityWithoutTokens() {
+        assertThat(schema(com.camisetas360.carrito.messaging.event.CheckoutRequestedEvent.class))
+                .containsKeys("tenantId", "objectId").doesNotContainKeys("jwt", "accessToken", "secret");
+    }
+
     // CT-CHECKOUT-001
     @Test
     void checkoutSchema_shouldMatch_betweenActualProducerAndConsumerRecords() {
@@ -56,7 +62,7 @@ class EventContractTest {
                 EventFixtures.EVENT_ID, "buyer@example.test", List.of(
                 new com.camisetas360.orders.messaging.event.CheckoutItemEvent("CAM-Ñ-東京", 2, 19.5),
                 new com.camisetas360.orders.messaging.event.CheckoutItemEvent("SKU-B", 3, 10.0)),
-                EventFixtures.OCCURRED_AT));
+                EventFixtures.OCCURRED_AT, java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222")));
     }
 
     // CT-ORDER-002
@@ -73,7 +79,7 @@ class EventContractTest {
                 EventFixtures.EVENT_ID, 42L, "buyer@example.test", 69.0, List.of(
                 new com.camisetas360.notifications.event.OrderItemEvent("CAM-Ñ-東京", 2, 19.5),
                 new com.camisetas360.notifications.event.OrderItemEvent("SKU-B", 3, 10.0)),
-                EventFixtures.OCCURRED_AT));
+                EventFixtures.OCCURRED_AT, java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222")));
     }
 
     private Message transport(MessageConverter producer, Object event) throws Exception {

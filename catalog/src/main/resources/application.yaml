@@ -35,21 +35,30 @@ spring:
 
 app:
   cors:
-    allowed-origin-patterns:
-      - ${CORS_ALLOWED_ORIGIN:http://localhost:*}
+    enabled: false
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health
   endpoint:
     health:
+      show-details: never
+      show-components: never
       probes:
         enabled: true
-      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
   health:
-    readinessstate:
-      enabled: true
     livenessstate:
       enabled: true
+    readinessstate:
+      enabled: true
+    rabbit:
+      enabled: false
+    mail:
+      enabled: false

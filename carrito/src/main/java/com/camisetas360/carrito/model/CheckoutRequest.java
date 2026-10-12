@@ -12,6 +12,8 @@ import java.util.UUID;
 public class CheckoutRequest {
     @Id private UUID id;
     @Column(name = "user_email", nullable = false) private String userEmail;
+    @Column(name = "tenant_id") private java.util.UUID tenantId;
+    @Column(name = "object_id") private java.util.UUID objectId;
     @Column(name = "total_amount", nullable = false) private Double totalAmount;
     @Column(nullable = false) private String status;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
@@ -22,6 +24,8 @@ public class CheckoutRequest {
     public CheckoutRequest(CheckoutRequestedEvent event, double total) {
         id = event.eventId();
         userEmail = event.userEmail();
+        tenantId = event.tenantId();
+        objectId = event.objectId();
         totalAmount = total;
         status = "PROCESSING";
         createdAt = event.occurredAt();
@@ -33,4 +37,8 @@ public class CheckoutRequest {
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
     public List<CheckoutRequestItem> getItems() { return List.copyOf(items); }
+    public java.util.UUID getTenantId() { return tenantId; }
+    public java.util.UUID getObjectId() { return objectId; }
+    public void setTenantId(java.util.UUID tenantId) { this.tenantId = tenantId; }
+    public void setObjectId(java.util.UUID objectId) { this.objectId = objectId; }
 }

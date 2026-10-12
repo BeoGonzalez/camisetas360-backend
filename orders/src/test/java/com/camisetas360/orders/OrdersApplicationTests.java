@@ -46,7 +46,7 @@ class OrdersApplicationTests extends PostgresTestSupport {
         assertThat(context.getBean(OrderController.class)).isNotNull();
         assertThat(jdbc.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class))
-                .containsExactly("1", "2", "3");
+                .containsExactly("1", "2", "3", "4", "5");
         mvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
         mvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk())

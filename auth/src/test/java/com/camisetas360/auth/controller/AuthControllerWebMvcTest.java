@@ -22,7 +22,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@WebMvcTest(controllers = AuthController.class, properties = "app.cors.allowed-origin-patterns[0]=https://frontend.example.test")
+@WebMvcTest(controllers = AuthController.class, properties = {"app.cors.enabled=true", "app.cors.allowed-origin-patterns[0]=https://frontend.example.test"})
 @Import({SecurityConfig.class, com.camisetas360.auth.service.UserProfileService.class})
 class AuthControllerWebMvcTest {
 
@@ -46,7 +46,7 @@ class AuthControllerWebMvcTest {
         mvc.perform(request(PATH).with(authorized()))
                 .andExpect(status().isOk())
                 .andExpect(content().json("""
-                        {"userId":"user-1","tenantId":"tenant-1",
+                        {"userId":"22222222-2222-2222-2222-222222222222","tenantId":"11111111-1111-1111-1111-111111111111",
                          "email":"buyer@example.test","name":"Buyer"}
                         """));
     }
@@ -88,10 +88,10 @@ class AuthControllerWebMvcTest {
                         .header("Access-Control-Request-Headers", "Authorization,Content-Type"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "https://frontend.example.test"))
-                .andExpect(header().string("Access-Control-Allow-Methods", "GET,OPTIONS"))
+                .andExpect(header().string("Access-Control-Allow-Methods", "GET,POST,OPTIONS"))
                 .andExpect(header().string("Access-Control-Allow-Headers", org.hamcrest.Matchers.containsString("Authorization")))
                 .andExpect(header().string("Access-Control-Allow-Headers", org.hamcrest.Matchers.containsString("Content-Type")))
-                .andExpect(header().string("Access-Control-Allow-Credentials", "true"));
+                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
         
     }
 
@@ -127,9 +127,9 @@ class AuthControllerWebMvcTest {
 
     private static JwtRequestPostProcessor authorized() {
         return jwt().jwt(token -> token
-                        .claim("iss", "https://issuer.example.test").subject("user-1")
+                        .claim("iss", "https://issuer.example.test").subject("22222222-2222-2222-2222-222222222222")
                         .claim("preferred_username", EMAIL)
-                        .claim("oid", "user-1").claim("tid", "tenant-1").claim("name", "Buyer"))
+                        .claim("oid", "22222222-2222-2222-2222-222222222222").claim("tid", "11111111-1111-1111-1111-111111111111").claim("name", "Buyer"))
                 .authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority("ROLE_CUSTOMER"));
     }
 

@@ -8,6 +8,12 @@ public record CheckoutRequestedEvent(
         UUID eventId,
         String userEmail,
         List<CheckoutItemEvent> items,
-        Instant occurredAt
+        Instant occurredAt,
+        UUID tenantId,
+        UUID objectId
 ) {
+    // Legacy wire payloads have unknown ownership; they are never inferred from email.
+    public CheckoutRequestedEvent(UUID eventId, String userEmail, List<CheckoutItemEvent> items, Instant occurredAt) {
+        this(eventId, userEmail, items, occurredAt, null, null);
+    }
 }

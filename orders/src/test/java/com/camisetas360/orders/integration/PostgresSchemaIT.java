@@ -51,10 +51,12 @@ class PostgresSchemaIT extends PostgresTestSupport {
         }
         assertThat(jdbc.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class))
-                .containsExactly("1", "2", "3");
+                .containsExactly("1", "2", "3", "4", "5");
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM flyway_schema_history WHERE checksum IS NOT NULL AND success", Integer.class))
-                .isEqualTo(3);
+                .isEqualTo(5);
+        assertThat(columnType("orders", "tenant_id")).isEqualTo("uuid");
+        assertThat(columnType("orders", "object_id")).isEqualTo("uuid");
         assertThat(columnType("orders", "total_amount")).isEqualTo("double precision");
         assertThat(columnType("order_items", "unit_price")).isEqualTo("double precision");
         assertThat(columnType("orders", "created_at")).isEqualTo("timestamp with time zone");

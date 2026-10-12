@@ -4,6 +4,8 @@ import com.camisetas360.carrito.messaging.CheckoutEventPublisher;
 import com.camisetas360.notifications.listener.OrderCreatedListener;
 import com.camisetas360.notifications.service.EmailService;
 import com.camisetas360.orders.messaging.OrderEventPublisher;
+import com.camisetas360.orders.messaging.OrderOutboxRelay;
+import com.camisetas360.orders.config.OutboxSchedulingConfig;
 import com.camisetas360.orders.messaging.listener.CheckoutRequestedListener;
 import com.camisetas360.orders.messaging.event.CheckoutRequestedEvent;
 import com.camisetas360.orders.model.Order;
@@ -29,6 +31,7 @@ import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.*;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.flywaydb.core.Flyway;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.springframework.orm.jpa.JpaTransactionManager;
@@ -86,10 +89,11 @@ class MessagingRabbitIT {
     }
 
     @BeforeEach
-    void connectAndDeclareTopology() {
+    void connectAndDeclareTopology() throws Exception {
         connection = new CachingConnectionFactory(RABBIT.getHost(), RABBIT.getAmqpPort());
         connection.setUsername(RABBIT.getAdminUsername());
         connection.setPassword(RABBIT.getAdminPassword());
+        connection.setPublisherConfirmType(CachingConnectionFactory.ConfirmType.CORRELATED);
         admin = new RabbitAdmin(connection);
         var cart = new com.camisetas360.carrito.config.RabbitMQConfig();
         var orders = new com.camisetas360.orders.config.RabbitMQConfig();
@@ -98,12 +102,20 @@ class MessagingRabbitIT {
         admin.declareExchange(orders.ordersExchange());
         admin.declareExchange(notifications.ordersExchange());
         admin.declareQueue(orders.checkoutRequestedQueue());
+        var deadLetters = orders.checkoutDeadLetterTopology();
+        deadLetters.getDeclarablesByType(Exchange.class).forEach(admin::declareExchange);
+        deadLetters.getDeclarablesByType(Queue.class).forEach(admin::declareQueue);
+        deadLetters.getDeclarablesByType(Binding.class).forEach(admin::declareBinding);
+        assertThat(RABBIT.execInContainer("rabbitmqctl", "set_policy", "--apply-to", "queues",
+                "orders-checkout-dlq", "^orders[.]checkout-requested[.]q$",
+                "{\"dead-letter-exchange\":\"camisetas360.orders.dlx\",\"dead-letter-routing-key\":\"checkout.requested.failed\"}").getExitCode()).isZero();
         admin.declareQueue(notifications.notificationsOrderCreatedQueue());
         admin.declareBinding(orders.checkoutRequestedBinding(orders.checkoutRequestedQueue(), orders.ordersExchange()));
         admin.declareBinding(notifications.notificationsOrderCreatedBinding(
                 notifications.notificationsOrderCreatedQueue(), notifications.ordersExchange()));
         admin.purgeQueue(CHECKOUT_QUEUE);
         admin.purgeQueue(NOTIFICATION_QUEUE);
+        admin.purgeQueue("orders.checkout-requested.dlq");
     }
 
     @AfterEach
@@ -144,7 +156,7 @@ class MessagingRabbitIT {
                     EventFixtures.EVENT_ID, "buyer@example.test", List.of(
                     new com.camisetas360.orders.messaging.event.CheckoutItemEvent("CAM-Ñ-東京", 2, 19.5),
                     new com.camisetas360.orders.messaging.event.CheckoutItemEvent("SKU-B", 3, 10.0)),
-                    EventFixtures.OCCURRED_AT));
+                    EventFixtures.OCCURRED_AT, java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222")));
         }
     }
 
@@ -157,7 +169,7 @@ class MessagingRabbitIT {
         try (var context = consumer(NotificationsConsumer.class, null, email)) {
             awaitConsumer(context);
             var template = template(new com.camisetas360.orders.config.RabbitMQConfig().jsonMessageConverter());
-            new OrderEventPublisher(template).publishOrderCreated(EventFixtures.orderCreated());
+            new OrderEventPublisher(template, null).sendConfirmed(EventFixtures.orderCreated());
 
             await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> verify(email).sendEmail(
                     "buyer@example.test", "Orden creada #42", """
@@ -221,6 +233,23 @@ class MessagingRabbitIT {
         }
     }
 
+    @Test
+    void checkoutWithoutImmutableIdentityIsRetainedInDlqAndNeverCreatesAnOrder() {
+        try (var context = consumer(OrderProcessing.class, null, null)) {
+            awaitConsumer(context);
+            var checkout = EventFixtures.checkout();
+            var legacy = new com.camisetas360.carrito.messaging.event.CheckoutRequestedEvent(
+                    UUID.randomUUID(), "legacy-unclaimed@example.test", checkout.items(), checkout.occurredAt());
+            var publisher = template(new com.camisetas360.carrito.config.RabbitMQConfig().jsonMessageConverter());
+            new CheckoutEventPublisher(publisher).publishCheckoutRequested(legacy);
+            var message = publisher.receive("orders.checkout-requested.dlq", 15000);
+            assertThat(message).as("Legacy event preserved for verified enrichment").isNotNull();
+            assertThat(new String(message.getBody(), StandardCharsets.UTF_8)).contains(legacy.eventId().toString());
+            assertThat(context.getBean(JdbcTemplate.class).queryForObject(
+                    "SELECT count(*) FROM orders WHERE user_email=?", Integer.class, legacy.userEmail())).isZero();
+        }
+    }
+
     private AnnotationConfigApplicationContext consumer(Class<?> config, OrderService service, EmailService email) {
         var context = new AnnotationConfigApplicationContext();
         context.registerBean(ConnectionFactory.class, () -> connection);
@@ -250,6 +279,7 @@ class MessagingRabbitIT {
     private RabbitTemplate template(MessageConverter converter) {
         var template = new RabbitTemplate(connection);
         template.setMessageConverter(converter);
+        template.setMandatory(true);
         return template;
     }
 
@@ -308,12 +338,14 @@ class MessagingRabbitIT {
     @Configuration(proxyBeanMethods = false)
     @EnableJpaRepositories(basePackageClasses = OrderRepository.class)
     @EnableTransactionManagement
-    @Import({OrdersConsumer.class, OrderService.class, OrderEventPublisher.class})
+    @Import({OrdersConsumer.class, OrderService.class, OrderEventPublisher.class,
+            OrderOutboxRelay.class, OutboxSchedulingConfig.class})
     static class OrderProcessing {
         @Bean
         RabbitTemplate rabbitTemplate(ConnectionFactory connection, MessageConverter converter) {
             var template = new RabbitTemplate(connection);
             template.setMessageConverter(converter);
+            template.setMandatory(true);
             return template;
         }
 
@@ -321,6 +353,11 @@ class MessagingRabbitIT {
         DataSource dataSource() {
             return new DriverManagerDataSource(POSTGRES.getJdbcUrl(),
                     POSTGRES.getUsername(), POSTGRES.getPassword());
+        }
+
+        @Bean
+        JdbcTemplate jdbcTemplate(DataSource dataSource) {
+            return new JdbcTemplate(dataSource);
         }
 
         @Bean(initMethod = "migrate")

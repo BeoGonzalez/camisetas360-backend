@@ -100,12 +100,23 @@ class JwtSecurityIT {
         verifyNoInteractions(service);
     }
 
+    @org.junit.jupiter.api.Test
+    void productionPreflightIsHandledWithoutBackendCorsHeaders() throws Exception {
+        mvc.perform(options(PATH).header("Origin", "https://frontend.example.test")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+        verifyNoInteractions(service);
+    }
+
     static Stream<String> protectedPaths() {
         return Stream.of(PATH);
     }
 
     static Stream<Arguments> invalidTokens() {
-        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "signature", "malformed")
+        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "future-nbf", "missing-exp", "missing-tenant", "missing-object", "signature", "malformed")
                 .map(variant -> Arguments.of(path, variant)));
     }
 
