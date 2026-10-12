@@ -16,6 +16,8 @@ public class Order {
 
     @Column(name = "user_email", nullable = false)
     private String userEmail;
+    @Column(name = "tenant_id") private java.util.UUID tenantId;
+    @Column(name = "object_id") private java.util.UUID objectId;
 
     @Column(name = "total_amount", nullable = false)
     private Double totalAmount;
@@ -86,4 +88,8 @@ public class Order {
         items.add(item);
         item.setOrder(this);
     }
+    public java.util.UUID getTenantId() { return tenantId; }
+    public java.util.UUID getObjectId() { return objectId; }
+    public void setTenantId(java.util.UUID tenantId) { this.tenantId = tenantId; }
+    public void setObjectId(java.util.UUID objectId) { this.objectId = objectId; }
 }

@@ -1,4 +1,5 @@
 package com.camisetas360.notifications.security;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 
 import com.camisetas360.notifications.controller.NotificationController;
 import com.camisetas360.notifications.service.EmailService;
@@ -208,11 +209,22 @@ class JwtSecurityIT {
                                 "Bearer "
                                         + ISSUER.token(
                                                 SCOPE,
-                                                "USER",
+                                                "CUSTOMER",
                                                 "valid")))
                 .andExpect(
                         status().isForbidden());
 
+        verifyNoInteractions(service);
+    }
+
+    @org.junit.jupiter.api.Test
+    void productionPreflightIsHandledWithoutBackendCorsHeaders() throws Exception {
+        mvc.perform(options(PATH).header("Origin", "https://frontend.example.test")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
         verifyNoInteractions(service);
     }
 
@@ -227,7 +239,7 @@ class JwtSecurityIT {
                         path -> Stream.of(
                                 "audience",
                                 "issuer",
-                                "expired",
+                                "expired", "future-nbf", "missing-exp",
                                 "signature",
                                 "malformed")
                                 .map(

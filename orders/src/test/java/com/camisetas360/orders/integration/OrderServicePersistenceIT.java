@@ -40,6 +40,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class OrderServicePersistenceIT extends PostgresTestSupport {
+    private static final com.camisetas360.orders.security.EntraIdentity OWNER = new com.camisetas360.orders.security.EntraIdentity(java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
 
     private static final String EMAIL = "buyer@example.test";
     private static final Instant CREATED_AT = Instant.parse("2026-01-01T12:00:00Z");
@@ -79,7 +80,7 @@ class OrderServicePersistenceIT extends PostgresTestSupport {
         var id = persistOrder(EMAIL, CREATED_AT);
         assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
 
-        assertOrder(service.findById(id, EMAIL), id, CREATED_AT);
+        assertOrder(service.findById(id, OWNER), id, CREATED_AT);
     }
 
     // IT-ORD-002
@@ -91,7 +92,7 @@ class OrderServicePersistenceIT extends PostgresTestSupport {
         persistOrder("other@example.test", Instant.parse("2026-01-03T12:00:00Z"));
         assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
 
-        var result = service.findByUserEmail(EMAIL);
+        var result = service.findByOwner(OWNER);
 
         assertThat(result).hasSize(2);
         assertOrder(result.get(0), newerId, later);
@@ -102,6 +103,7 @@ class OrderServicePersistenceIT extends PostgresTestSupport {
         return new TransactionTemplate(transactionManager).execute(status -> {
             var order = new Order();
             order.setUserEmail(email);
+            order.setTenantId(OWNER.tenantId()); order.setObjectId(email.equals(EMAIL) ? OWNER.objectId() : java.util.UUID.fromString("33333333-3333-3333-3333-333333333333"));
             order.setTotalAmount(69.0);
             order.setStatus(OrderStatus.CREATED);
             order.setCreatedAt(createdAt);

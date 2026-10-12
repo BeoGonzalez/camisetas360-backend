@@ -142,13 +142,9 @@ final class LocalJwtIssuer implements AutoCloseable {
                         "audience".equals(variant)
                                 ? "another-api"
                                 : AUDIENCE)
-                .subject("user-1")
-                .claim(
-                        "oid",
-                        "user-1")
-                .claim(
-                        "tid",
-                        "tenant-1")
+                .subject("22222222-2222-2222-2222-222222222222")
+                .claim("oid", "missing-object".equals(variant) ? null : "22222222-2222-2222-2222-222222222222")
+                .claim("tid", "missing-tenant".equals(variant) ? null : "11111111-1111-1111-1111-111111111111")
                 .claim(
                         "name",
                         "Buyer")
@@ -165,8 +161,8 @@ final class LocalJwtIssuer implements AutoCloseable {
                 .notBeforeTime(
                         Date.from(
                                 Instant.parse(
-                                        "2020-01-01T00:00:00Z")))
-                .expirationTime(
+                                        "future-nbf".equals(variant) ? "2100-01-01T00:00:00Z" : "2020-01-01T00:00:00Z")))
+                .expirationTime("missing-exp".equals(variant) ? null :
                         Date.from(
                                 Instant.parse(
                                         "expired".equals(variant)

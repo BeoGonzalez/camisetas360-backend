@@ -92,12 +92,38 @@ class JwtSecurityIT {
         verifyNoInteractions(service);
     }
 
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"CUSTOMER","ADMIN","CATALOG_MANAGER"})
+    void eachConfiguredRoleWorksWithTheRequiredScope(String role) throws Exception {
+        when(service.getAllProducts()).thenReturn(java.util.List.of());
+        String token=ISSUER.token(SCOPE,"role-"+role);
+        assertThat(decoder.decode(token).getClaimAsStringList("roles")).containsExactly(role);
+        mvc.perform(request(PATH).header("Authorization","Bearer "+token)).andExpect(status().isOk());
+    }
+
+    @org.junit.jupiter.api.Test
+    void titleCaseRoleDoesNotGrantUpperCaseRole() throws Exception {
+        mvc.perform(request(PATH).header("Authorization","Bearer "+ISSUER.token(SCOPE,"role-Customer")))
+                .andExpect(status().isForbidden());
+    }
+    @org.junit.jupiter.api.Test
+    void productionPreflightIsHandledWithoutBackendCorsHeaders() throws Exception {
+        mvc.perform(options(PATH).header("Origin", "https://frontend.example.test")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+        verifyNoInteractions(service);
+    }
+
     static Stream<String> protectedPaths() {
         return Stream.of(PATH);
     }
 
     static Stream<Arguments> invalidTokens() {
-        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "signature", "malformed")
+        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "future-nbf", "missing-exp", "signature", "malformed")
                 .map(variant -> Arguments.of(path, variant)));
     }
 

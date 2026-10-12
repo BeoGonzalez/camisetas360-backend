@@ -33,7 +33,7 @@ class UserProfilePersistenceIT extends PostgresTestSupport {
         assertThat(stored.getEmail()).isEqualTo("new@example.test");
         assertThat(stored.getName()).isEqualTo("Nuevo 東京");
         assertThat(stored.getUserId()).isEqualTo("object-1");
-        assertThat(stored.getTenantId()).isEqualTo("tenant-1");
+        assertThat(stored.getTenantId()).isEqualTo("11111111-1111-1111-1111-111111111111");
         assertThat(jdbc.queryForObject("SELECT email FROM user_profiles", String.class)).isEqualTo("new@example.test");
     }
 
@@ -79,7 +79,7 @@ class UserProfilePersistenceIT extends PostgresTestSupport {
 
     private static Jwt token(String issuer, String subject, String email, String name) {
         return Jwt.withTokenValue("test").header("alg", "none").issuer(issuer).subject(subject)
-                .claim("oid", "object-1").claim("tid", "tenant-1")
+                .claim("oid", "object-1").claim("tid", "11111111-1111-1111-1111-111111111111")
                 .claim("preferred_username", email).claim("name", name).build();
     }
 }

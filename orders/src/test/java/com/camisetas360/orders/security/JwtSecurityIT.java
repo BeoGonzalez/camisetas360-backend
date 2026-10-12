@@ -37,6 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ImportAutoConfiguration(OAuth2ResourceServerAutoConfiguration.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class JwtSecurityIT {
+    private static final com.camisetas360.orders.security.EntraIdentity OWNER = new com.camisetas360.orders.security.EntraIdentity(java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
 
     private static final String PATH = "/api/v1/orders";
     private static final String EMAIL = "buyer@example.test";
@@ -69,11 +70,11 @@ class JwtSecurityIT {
     @MethodSource("protectedPaths")
     void endpoint_shouldAllowSignedJwt_whenIssuerAudienceSignatureAndScopeAreValid(String path) throws Exception {
         if (path.endsWith("/42")) {
-            when(service.findById(42L, EMAIL)).thenReturn(new OrderResponseDTO(42L, EMAIL, 39.0,
+            when(service.findById(42L, OWNER)).thenReturn(new OrderResponseDTO(42L, EMAIL, 39.0,
                     OrderStatus.CREATED, Instant.parse("2026-01-01T12:00:00Z"),
                     List.of(new OrderItemResponseDTO("SKU-A", 2, 19.5))));
         } else {
-            when(service.findByUserEmail(EMAIL)).thenReturn(List.of());
+            when(service.findByOwner(OWNER)).thenReturn(List.of());
         }
         assertThat(mockingDetails(decoder).isMock()).isFalse();
         var result = mvc.perform(request(path).header("Authorization", "Bearer " + ISSUER.token(SCOPE, "valid")))
@@ -82,10 +83,10 @@ class JwtSecurityIT {
         if (path.endsWith("/42")) {
             result.andExpect(jsonPath("$.orderId").value(42))
                     .andExpect(jsonPath("$.items[0].sku").value("SKU-A"));
-            verify(service).findById(42L, EMAIL);
+            verify(service).findById(42L, OWNER);
         } else {
             result.andExpect(content().json("[]"));
-            verify(service).findByUserEmail(EMAIL);
+            verify(service).findByOwner(OWNER);
         }
         verifyNoMoreInteractions(service);
         assertThat(ISSUER.jwksRequests()).isPositive();
@@ -110,12 +111,23 @@ class JwtSecurityIT {
         verifyNoInteractions(service);
     }
 
+    @org.junit.jupiter.api.Test
+    void productionPreflightIsHandledWithoutBackendCorsHeaders() throws Exception {
+        mvc.perform(options(PATH).header("Origin", "https://frontend.example.test")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+        verifyNoInteractions(service);
+    }
+
     static Stream<String> protectedPaths() {
         return Stream.of(PATH, PATH + "/42");
     }
 
     static Stream<Arguments> invalidTokens() {
-        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "signature", "malformed")
+        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "future-nbf", "missing-exp", "missing-tenant", "missing-object", "signature", "malformed")
                 .map(variant -> Arguments.of(path, variant)));
     }
 

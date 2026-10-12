@@ -12,6 +12,7 @@ public abstract class PostgresTestSupport {
     private static PostgreSQLContainer postgres;
 
     @DynamicPropertySource
+    @SuppressWarnings("resource")
     static synchronized void databaseProperties(DynamicPropertyRegistry registry) {
         if (postgres == null || !postgres.isRunning()) {
             postgres = new PostgreSQLContainer("postgres:17")

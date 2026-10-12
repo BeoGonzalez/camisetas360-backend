@@ -1,5 +1,7 @@
 # Camisetas360 backend
 
+- [RabbitMQ OSS privado en ECS sobre EC2: topología, outbox, DLQ y recuperación](deploy/ecs/rabbitmq/README.md).
+
 Microservicios Java 21 y Spring Boot 4.1.1: auth, catalog, carrito, orders y notifications.
 
 ## Backend local con un único Docker Compose
@@ -45,6 +47,8 @@ Estas tablas complementan products, orders y order_items existentes.
 - [Bases propias de los cinco servicios: cambios completos y verificación](docs/postgresql/BASES-POR-MICROSERVICIO.md).
 
 ## Pruebas
+
+Contrato de autenticación, ownership, CORS, health y checklists externos: [Seguridad Entra ID](docs/security/ENTRA-SECURITY.md).
 
 Cada servicio es un proyecto Maven independiente. Desde su directorio:
 

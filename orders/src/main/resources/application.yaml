@@ -27,6 +27,23 @@ spring:
     username: ${RABBITMQ_USERNAME:camisetas360}
     password: ${RABBITMQ_PASSWORD:camisetas360_dev}
     virtual-host: ${RABBITMQ_VHOST:/camisetas360}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    connection-timeout: 5s
+    requested-heartbeat: 30s
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        missing-queues-fatal: false
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-retries: 2
+          initial-interval: 1s
+          multiplier: 2
+          max-interval: 5s
 
   security:
     oauth2:
@@ -44,17 +61,24 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health
   endpoint:
     health:
+      show-details: never
+      show-components: never
       probes:
         enabled: true
-      show-details: never
       group:
+        liveness:
+          include: livenessState
         readiness:
           include: readinessState,db
   health:
-    readinessstate:
-      enabled: true
     livenessstate:
       enabled: true
+    readinessstate:
+      enabled: true
+    rabbit:
+      enabled: false
+    mail:
+      enabled: false

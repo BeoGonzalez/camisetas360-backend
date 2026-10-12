@@ -70,6 +70,9 @@ class CartServiceTest {
         assertThat(event.eventId()).isNotNull();
         assertThat(event.occurredAt()).isNotNull();
         assertThat(event.userEmail()).isEqualTo("Buyer@example.test");
+        assertThat(event).extracting("tenantId","objectId").containsExactly(
+                java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
         assertThat(event.items()).containsExactly(
                 new CheckoutItemEvent("SKU-A", 2, 19.5),
                 new CheckoutItemEvent("SKU-B", 3, 10.0));
@@ -109,10 +112,10 @@ class CartServiceTest {
     void createOrder_shouldThrowException_whenPreferredUsernameIsMissing() {
         authenticate(null);
 
-        var failure = assertThrows(IllegalStateException.class,
+        var failure = assertThrows(MissingContactEmailException.class,
                 () -> service.createOrder(validRequest()));
 
-        assertThat(failure).hasMessage("El token JWT no contiene el claim preferred_username");
+        assertThat(failure).hasMessage("A valid contact email is required for checkout notifications");
         verify(publisher, never()).publishCheckoutRequested(any());
     }
 
@@ -123,7 +126,7 @@ class CartServiceTest {
     void createOrder_shouldNotPublish_whenPreferredUsernameIsBlank(String email) {
         authenticate(email);
 
-        assertThrows(IllegalStateException.class, () -> service.createOrder(validRequest()));
+        assertThrows(MissingContactEmailException.class, () -> service.createOrder(validRequest()));
 
         verifyNoInteractions(publisher);
     }
@@ -142,6 +145,16 @@ class CartServiceTest {
         verifyNoMoreInteractions(publisher);
     }
 
+    @Test
+    void missingUsernameCanUseContactEmailClaim() {
+        authenticate(null);
+        var original=(Jwt)SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        var jwt=Jwt.withTokenValue("test").header("alg","none")
+                .claims(claims->claims.putAll(original.getClaims())).claim("email","contact@example.test").build();
+        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+        assertThat(service.createOrder(validRequest()).userEmail()).isEqualTo("contact@example.test");
+    }
+
     private static OrderRequestDTO validRequest() {
         return new OrderRequestDTO(List.of(new OrderItemDTO("SKU-A", 1, 19.5)));
     }
@@ -149,7 +162,9 @@ class CartServiceTest {
     private static void authenticate(String email) {
         var builder = Jwt.withTokenValue("unit-test-token")
                 .header("alg", "none")
-                .subject("test-user");
+                .subject("test-user")
+                .claim("tid","11111111-1111-1111-1111-111111111111")
+                .claim("oid","22222222-2222-2222-2222-222222222222");
         if (email != null) {
             builder.claim("preferred_username", email);
         }

@@ -86,6 +86,6 @@ class OrderCreatedListenerTest {
                 42L, "buyer@example.test", 69.0,
                 List.of(new OrderItemEvent("SKU-A", 2, 19.5),
                         new OrderItemEvent("SKU-B", 3, 10.0)),
-                Instant.parse("2026-01-01T12:00:00Z"));
+                Instant.parse("2026-01-01T12:00:00Z"), java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
     }
 }

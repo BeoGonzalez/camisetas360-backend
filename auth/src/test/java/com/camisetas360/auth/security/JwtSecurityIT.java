@@ -66,7 +66,7 @@ class JwtSecurityIT {
         assertThat(mockingDetails(decoder).isMock()).isFalse();
         mvc.perform(request(path).header("Authorization", "Bearer " + ISSUER.token(SCOPE, "valid")))
                 .andExpect(status().is(200))
-                .andExpect(jsonPath("$.email").value(EMAIL)).andExpect(jsonPath("$.userId").value("user-1"));
+                .andExpect(jsonPath("$.email").value(EMAIL)).andExpect(jsonPath("$.userId").value("22222222-2222-2222-2222-222222222222"));
         assertThat(ISSUER.jwksRequests()).isPositive();
     }
 
@@ -87,7 +87,33 @@ class JwtSecurityIT {
     void endpoint_shouldReturn403_whenSignedJwtHasNoRequiredScope(String path) throws Exception {
         mvc.perform(request(path).header("Authorization", "Bearer " + ISSUER.token("", "valid")))
                 .andExpect(status().isForbidden());
+
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"CUSTOMER","ADMIN","CATALOG_MANAGER"})
+    void eachConfiguredRoleWorksWithTheRequiredScope(String role) throws Exception {
         
+        String token=ISSUER.token(SCOPE,"role-"+role);
+        assertThat(decoder.decode(token).getClaimAsStringList("roles")).containsExactly(role);
+        mvc.perform(request(PATH).header("Authorization","Bearer "+token)).andExpect(status().isOk());
+    }
+
+    @org.junit.jupiter.api.Test
+    void titleCaseRoleDoesNotGrantUpperCaseRole() throws Exception {
+        mvc.perform(request(PATH).header("Authorization","Bearer "+ISSUER.token(SCOPE,"role-Customer")))
+                .andExpect(status().isForbidden());
+    }
+    @org.junit.jupiter.api.Test
+    void productionPreflightIsHandledWithoutBackendCorsHeaders() throws Exception {
+        mvc.perform(options(PATH).header("Origin", "https://frontend.example.test")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+        verifyNoInteractions(profiles);
     }
 
     static Stream<String> protectedPaths() {
@@ -95,7 +121,7 @@ class JwtSecurityIT {
     }
 
     static Stream<Arguments> invalidTokens() {
-        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "signature", "malformed", "missing-subject")
+        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "future-nbf", "missing-exp", "signature", "malformed", "missing-subject")
                 .map(variant -> Arguments.of(path, variant)));
     }
 

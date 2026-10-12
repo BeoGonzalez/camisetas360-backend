@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.tuple;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class OrderRepositoryTest extends PostgresTestSupport {
+    private static final com.camisetas360.orders.security.EntraIdentity OWNER = new com.camisetas360.orders.security.EntraIdentity(java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"), java.util.UUID.fromString("22222222-2222-2222-2222-222222222222"));
 
     private static final String EMAIL = "buyer@example.test";
     private static final Instant CREATED_AT = Instant.parse("2026-01-01T12:00:00Z");
@@ -71,7 +72,7 @@ class OrderRepositoryTest extends PostgresTestSupport {
         repository.flush();
         entityManager.clear();
 
-        var result = repository.findByUserEmailOrderByCreatedAtDesc(EMAIL);
+        var result = repository.findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId());
 
         assertThat(result).extracting(Order::getId)
                 .containsExactly(newest.getId(), middle.getId(), oldest.getId());
@@ -84,7 +85,7 @@ class OrderRepositoryTest extends PostgresTestSupport {
         repository.saveAndFlush(order("other@example.test", CREATED_AT));
         entityManager.clear();
 
-        assertThat(repository.findByUserEmailOrderByCreatedAtDesc(EMAIL)).isEmpty();
+        assertThat(repository.findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId())).isEmpty();
     }
 
     // JPA-ORD-003
@@ -131,9 +132,22 @@ class OrderRepositoryTest extends PostgresTestSupport {
         itemIds.forEach(itemId -> assertThat(entityManager.find(OrderItem.class, itemId)).isNull());
     }
 
+    @Test
+    void immutableOwnerQuerySeparatesIdentitiesEvenWhenEmailMatches() {
+        var owned = repository.save(order(EMAIL, CREATED_AT));
+        var foreign = order(EMAIL, CREATED_AT);
+        foreign.setObjectId(java.util.UUID.fromString("33333333-3333-3333-3333-333333333333"));
+        repository.saveAndFlush(foreign);
+        entityManager.clear();
+        assertThat(repository.findByTenantIdAndObjectIdOrderByCreatedAtDesc(OWNER.tenantId(), OWNER.objectId()))
+                .extracting(Order::getId).containsExactly(owned.getId());
+    }
+
     private static Order order(String email, Instant createdAt) {
         var order = new Order();
         order.setUserEmail(email);
+        order.setTenantId(OWNER.tenantId());
+        order.setObjectId(email.equals(EMAIL) ? OWNER.objectId() : java.util.UUID.fromString("33333333-3333-3333-3333-333333333333"));
         order.setTotalAmount(69.0);
         order.setStatus(OrderStatus.CREATED);
         order.setCreatedAt(createdAt);

@@ -50,4 +50,14 @@ public class RabbitMQConfig {
         public MessageConverter jsonMessageConverter() {
                 return new JacksonJsonMessageConverter();
         }
+
+        // The source queue remains unchanged. Install the matching broker policy
+        // before upgrading consumers so rejected legacy events are retained.
+        @Bean
+        public org.springframework.amqp.core.Declarables checkoutDeadLetterTopology() {
+                var exchange = new DirectExchange("camisetas360.orders.dlx", true, false);
+                var queue = QueueBuilder.durable("orders.checkout-requested.dlq").build();
+                return new org.springframework.amqp.core.Declarables(exchange, queue,
+                        BindingBuilder.bind(queue).to(exchange).with("checkout.requested.failed"));
+        }
 }

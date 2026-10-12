@@ -52,7 +52,8 @@ public final class ComposeJwtIssuer {
         Instant now = Instant.now();
         var claims = new JWTClaimsSet.Builder().issuer(issuer).audience("camisetas360-compose-qa")
                 .subject(includeSubject ? email : null).claim("preferred_username", email).claim("name", "Compose QA Buyer")
-                .claim("oid", "compose-user").claim("tid", "compose-tenant")
+                .claim("oid", java.util.UUID.nameUUIDFromBytes(email.getBytes(StandardCharsets.UTF_8)).toString())
+                .claim("tid", "11111111-1111-1111-1111-111111111111")
                 .claim("scp", "Checkout.Create Orders.Read Profile.Read Catalog.Read")
                 .claim("roles", List.of("CUSTOMER"))
                 .issueTime(Date.from(now)).notBeforeTime(Date.from(now.minusSeconds(30)))

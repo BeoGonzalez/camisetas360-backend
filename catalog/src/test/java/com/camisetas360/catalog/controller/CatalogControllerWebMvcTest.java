@@ -25,7 +25,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.mockito.Mockito.*;
 
-@WebMvcTest(controllers = CatalogController.class, properties = "app.cors.allowed-origin-patterns[0]=https://frontend.example.test")
+@WebMvcTest(controllers = CatalogController.class, properties = {"app.cors.enabled=true", "app.cors.allowed-origin-patterns[0]=https://frontend.example.test"})
 @Import(SecurityConfig.class)
 class CatalogControllerWebMvcTest {
 
@@ -106,7 +106,7 @@ class CatalogControllerWebMvcTest {
                         .header("Access-Control-Request-Headers", "Authorization,Content-Type,Accept"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "https://frontend.example.test"))
-                .andExpect(header().string("Access-Control-Allow-Methods", "GET,OPTIONS"))
+                .andExpect(header().string("Access-Control-Allow-Methods", "GET,POST,OPTIONS"))
                 .andExpect(header().string("Access-Control-Allow-Headers", org.hamcrest.Matchers.containsString("Authorization")))
                 .andExpect(header().string("Access-Control-Allow-Headers", org.hamcrest.Matchers.containsString("Content-Type")))
                 .andExpect(header().string("Access-Control-Allow-Headers", org.hamcrest.Matchers.containsString("Accept")))
@@ -147,7 +147,7 @@ class CatalogControllerWebMvcTest {
     private static JwtRequestPostProcessor authorized() {
         return jwt().jwt(token -> token
                         .claim("preferred_username", EMAIL)
-                        .claim("oid", "user-1").claim("tid", "tenant-1").claim("name", "Buyer"))
+                        .claim("oid", "22222222-2222-2222-2222-222222222222").claim("tid", "11111111-1111-1111-1111-111111111111").claim("name", "Buyer"))
                 .authorities(new SimpleGrantedAuthority(AUTHORITY), new SimpleGrantedAuthority("ROLE_CUSTOMER"));
     }
 

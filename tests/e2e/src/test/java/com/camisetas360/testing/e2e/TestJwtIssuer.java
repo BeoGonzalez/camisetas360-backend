@@ -104,17 +104,22 @@ final class TestJwtIssuer implements AutoCloseable {
             String email,
             String scopes,
             String role) throws Exception {
+        return token(email, email, scopes, role);
+    }
 
-        var builder = new JWTClaimsSet.Builder()
+    // Test identity is independent of its mutable contact claim.
+    String token(String identityKey, String contact, String scopes, String role) throws Exception {
+
+        var builder = new JWTClaimsSet.Builder().claim("tid","11111111-1111-1111-1111-111111111111").claim("oid",java.util.UUID.nameUUIDFromBytes(identityKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString())
                 .issuer(
                         issuer())
                 .audience(
                         AUDIENCE)
                 .subject(
-                        email)
+                        identityKey)
                 .claim(
                         "preferred_username",
-                        email)
+                        contact)
                 .claim(
                         "scp",
                         scopes)

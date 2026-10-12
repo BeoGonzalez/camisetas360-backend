@@ -308,6 +308,9 @@ jobs:
             clean verify \
             2>&1 | tee tests/messaging/ci-verify.log
 
+      - name: Verify RabbitMQ deployment contract
+        run: python3 tests/security/test_deployment_contract.py
+
       - name: Upload messaging results
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

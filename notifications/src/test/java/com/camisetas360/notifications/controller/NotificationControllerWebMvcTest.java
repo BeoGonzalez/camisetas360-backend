@@ -258,8 +258,8 @@ class NotificationControllerWebMvcTest {
         return jwt()
                 .jwt(token -> token
                         .claim("preferred_username", EMAIL)
-                        .claim("oid", "user-1")
-                        .claim("tid", "tenant-1")
+                        .claim("oid", "22222222-2222-2222-2222-222222222222")
+                        .claim("tid", "11111111-1111-1111-1111-111111111111")
                         .claim("name", "Buyer"))
                 .authorities(authorities(
                         ROLE_ADMIN,

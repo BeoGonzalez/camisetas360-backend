@@ -323,6 +323,14 @@ class CheckoutFlowE2EIT {
 
         var flow = checkoutAndAssertDelivery();
 
+        String identityKey = flow.order().get("userEmail").asString();
+        String orderUrl = orders.baseUrl() + "/api/v1/orders/" + flow.orderId();
+        for (String contact : new String[]{"renamed@example.test", null}) {
+            assertThat(getJson(orderUrl, issuer.token(identityKey, contact, "Orders.Read", CUSTOMER_ROLE), 200))
+                    .isEqualTo(flow.order());
+        }
+        getJson(orderUrl, issuer.token("different-object", identityKey, "Orders.Read", CUSTOMER_ROLE), 404);
+
         var otherToken = issuer.token(
                 "other-"
                         + UUID.randomUUID()
@@ -636,11 +644,13 @@ class CheckoutFlowE2EIT {
                 postgres.getUsername(), postgres.getPassword())) {
             assertThat(connection.getMetaData().getDatabaseProductName()).isEqualTo("PostgreSQL");
             try (var query = connection.prepareStatement(
-                    "SELECT user_email, total_amount, status, created_at FROM orders WHERE id = ?")) {
+                    "SELECT user_email, total_amount, status, created_at, tenant_id, object_id FROM orders WHERE id = ?")) {
                 query.setLong(1, id);
                 try (var result = query.executeQuery()) {
                     assertThat(result.next()).as("Committed order exists in PostgreSQL").isTrue();
                     assertThat(result.getString("user_email")).isEqualTo(email);
+                    assertThat(result.getObject("tenant_id", UUID.class)).isEqualTo(UUID.fromString("11111111-1111-1111-1111-111111111111"));
+                    assertThat(result.getObject("object_id", UUID.class)).isEqualTo(UUID.nameUUIDFromBytes(email.getBytes(StandardCharsets.UTF_8)));
                     assertThat(result.getDouble("total_amount")).isEqualTo(69.0);
                     assertThat(result.getString("status")).isEqualTo("CREATED");
                     assertThat(result.getObject("created_at", OffsetDateTime.class).toInstant())
@@ -665,12 +675,12 @@ class CheckoutFlowE2EIT {
                          "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")) {
                 var versions = new ArrayList<String>();
                 while (result.next()) versions.add(result.getString(1));
-                assertThat(versions).containsExactly("1", "2", "3");
+                assertThat(versions).containsExactly("1", "2", "3", "4", "5");
             }
         }
         Files.writeString(logs.resolve("postgres-persistence.txt"),
                 "PostgreSQL: committed order " + id + "; owner=" + email
-                        + "; total=69.0; status=CREATED; items=2; Flyway=1,2,3\n");
+                        + "; total=69.0; status=CREATED; items=2; Flyway=1,2,3,4,5\n");
     }
 
     private HashMap<String, String> databaseProperties(Map<String, String> common, PostgreSQLContainer database) {
@@ -707,10 +717,14 @@ class CheckoutFlowE2EIT {
                 }
             }
             assertThat(items).containsExactlyInAnyOrder("CAM-Ñ-東京:2:19.5", "CAM-002:3:10.0");
-            assertSingleMigration(connection);
+            try (var query = connection.createStatement(); var result = query.executeQuery(
+                    "SELECT count(*) FROM flyway_schema_history WHERE success AND version IN ('1','2')")) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getInt(1)).isEqualTo(2);
+            }
         }
         Files.writeString(logs.resolve("carrito-persistence.txt"),
-                "Carrito PostgreSQL: committed checkout=" + requestId + "; owner=" + email + "; total=69; items=2; Flyway=1\n");
+                "Carrito PostgreSQL: committed checkout=" + requestId + "; contact=" + email + "; total=69; items=2; Flyway=1,2\n");
     }
 
     private void assertDeliveryPersisted(long id, String email) {
@@ -818,6 +832,8 @@ class CheckoutFlowE2EIT {
             var event = JSON.readTree(captured.get(0).get("payload").asString());
             assertThat(event.get("orderId").asLong()).isEqualTo(orderId);
             assertThat(event.get("userEmail").asString()).isEqualTo(email);
+            assertThat(event.get("tenantId").asString()).isEqualTo("11111111-1111-1111-1111-111111111111");
+            assertThat(event.get("objectId").asString()).isEqualTo(UUID.nameUUIDFromBytes(email.getBytes(StandardCharsets.UTF_8)).toString());
             assertThat(event.get("totalAmount").asDouble()).isEqualTo(69.0);
             var eventItems = new ArrayList<JsonNode>();
             event.get("items").forEach(eventItems::add);
