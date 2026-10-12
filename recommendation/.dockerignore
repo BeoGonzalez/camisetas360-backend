@@ -1,0 +1,5 @@
+**
+!target/
+!target/*-SNAPSHOT.jar
+!target/*.jar
+

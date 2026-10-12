@@ -138,12 +138,14 @@ jobs:
             exit 1
           fi
 
+          JAR_NAME="$(basename "${jars[0]}")"
+          cp "${jars[0]}" "${SERVICE}/target/${JAR_NAME}"
           cp "${jars[0]}" "${SERVICE}/target/app.jar"
 
-          test -s "${SERVICE}/target/app.jar"
+          test -s "${SERVICE}/target/${JAR_NAME}"
 
           echo "Verified artifact:"
-          ls -lh "${SERVICE}/target/app.jar"
+          ls -lh "${SERVICE}/target"
 
       # ----------------------------------------------------------
       # Validate repository exists.
