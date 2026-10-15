@@ -52,12 +52,14 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false
     rabbit:
       enabled: false
     mail:

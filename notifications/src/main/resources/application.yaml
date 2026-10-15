@@ -2,6 +2,9 @@ server:
   port: 8080
 
 spring:
+  application:
+    name: notifications-service
+
   datasource:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
@@ -18,15 +21,11 @@ spring:
     open-in-view: false
     show-sql: false
 
-  application:
-    name: notifications-service
-
   mail:
     host: smtp.gmail.com
     port: 587
     username: ${MAIL_USERNAME}
     password: ${MAIL_PASSWORD}
-
     properties:
       mail:
         smtp:
@@ -65,12 +64,14 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false
     rabbit:
       enabled: false
     mail:

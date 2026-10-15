@@ -43,6 +43,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
                                 "/actuator/health/readiness").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**")
                         .access(new WebExpressionAuthorizationManager(
                                 "hasAnyRole('CUSTOMER','CATALOG_MANAGER','ADMIN') and hasAuthority('SCOPE_Catalog.Read')"))

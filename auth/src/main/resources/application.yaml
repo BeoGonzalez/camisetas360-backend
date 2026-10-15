@@ -2,6 +2,9 @@ server:
   port: 8080
 
 spring:
+  application:
+    name: auth-service
+
   datasource:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
@@ -15,11 +18,12 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    open-in-view: false
     show-sql: false
+    open-in-view: false
 
-  application:
-    name: auth-service
+  sql:
+    init:
+      mode: never
 
   security:
     oauth2:
@@ -28,6 +32,10 @@ spring:
           issuer-uri: ${ENTRA_ISSUER_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
           audiences:
             - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
+
+app:
+  cors:
+    enabled: false
 
 management:
   endpoints:
@@ -44,17 +52,15 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false
     rabbit:
       enabled: false
     mail:
       enabled: false
-
-app:
-  cors:
-    enabled: false
