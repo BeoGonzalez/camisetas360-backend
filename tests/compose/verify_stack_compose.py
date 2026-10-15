@@ -17,6 +17,10 @@ def request(url, token=None, body=None, expected=200, method=None):
         response = urllib.request.urlopen(req, timeout=5)
     except urllib.error.HTTPError as failure:
         response = failure
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as network_error:
+        # Convierte errores de conexión en AssertionError para que 'eventually' los atrape y reintente
+        raise AssertionError("El servicio aún no está listo: " + str(network_error))
+        
     with response:
         assert response.status == expected, "Unexpected HTTP status: " + str(response.status)
         content = response.read()
