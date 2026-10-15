@@ -1,13 +1,20 @@
+server:
+  port: 8080
+
 spring:
   application:
-    name: recommendation
+    name: recommendation-service
+
   datasource:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
   flyway:
     enabled: true
     clean-disabled: true
+
   ai:
     mistralai:
       api-key: ${SPRING_AI_MISTRALAI_API_KEY:}
@@ -15,16 +22,19 @@ spring:
         options:
           model: ${SPRING_AI_MISTRALAI_CHAT_MODEL:mistral-small-latest}
           temperature: 0.7
+
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+    show-sql: false
+
   rabbitmq:
-    host: ${RABBITMQ_HOST}
+    host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USERNAME}
-    password: ${RABBITMQ_PASSWORD}
-    virtual-host: ${RABBITMQ_VHOST}
+    username: ${RABBITMQ_USERNAME:camisetas360}
+    password: ${RABBITMQ_PASSWORD:camisetas360_dev}
+    virtual-host: ${RABBITMQ_VHOST:/camisetas360}
     connection-timeout: 5s
     requested-heartbeat: 30s
     listener:
@@ -39,9 +49,6 @@ spring:
           initial-interval: 1s
           multiplier: 2
           max-interval: 5s
-
-server:
-  port: 8080
 
 management:
   endpoints:
@@ -58,13 +65,15 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false # Evita falsos "Unhealthy" por latencia de red en AWS RDS
     rabbit:
-      enabled: false
+      enabled: true # Activado porque recommendation consume eventos por RabbitMQ
     mail:
       enabled: false

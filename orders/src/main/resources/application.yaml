@@ -72,13 +72,15 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false # Evita falsos "Unhealthy" por latencia de red en AWS RDS
     rabbit:
-      enabled: false
+      enabled: true # Activado porque orders utiliza mensajería de forma activa
     mail:
       enabled: false

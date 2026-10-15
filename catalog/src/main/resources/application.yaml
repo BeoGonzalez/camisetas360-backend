@@ -52,12 +52,14 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false # Vital para evitar falsos "Unhealthy" por latencia de red en AWS RDS
     rabbit:
       enabled: false
     mail:

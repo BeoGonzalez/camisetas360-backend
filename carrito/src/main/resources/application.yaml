@@ -2,6 +2,9 @@ server:
   port: 8080
 
 spring:
+  application:
+    name: carrito-service
+
   datasource:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
@@ -17,9 +20,6 @@ spring:
       ddl-auto: validate
     open-in-view: false
     show-sql: false
-
-  application:
-    name: carrito-service
 
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
@@ -51,13 +51,19 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false # Evita falsos "Unhealthy" por latencia de red en AWS RDS
     rabbit:
-      enabled: false
+      enabled: true # Activado ya que carrito sí interactúa con mensajería
     mail:
       enabled: false
+
+app:
+  cors:
+    enabled: false

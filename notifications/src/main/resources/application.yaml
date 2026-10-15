@@ -2,6 +2,9 @@ server:
   port: 8080
 
 spring:
+  application:
+    name: notifications-service
+
   datasource:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
@@ -18,15 +21,11 @@ spring:
     open-in-view: false
     show-sql: false
 
-  application:
-    name: notifications-service
-
   mail:
     host: smtp.gmail.com
     port: 587
     username: ${MAIL_USERNAME}
     password: ${MAIL_PASSWORD}
-
     properties:
       mail:
         smtp:
@@ -65,17 +64,20 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+    db:
+      enabled: false # Evita falsos "Unhealthy" por latencia de red en AWS RDS
     rabbit:
-      enabled: false
+      enabled: true # Activado porque notifications procesa colas de mensajes
     mail:
-      enabled: false
+      enabled: true # Activado para verificar el subsistema de correo
 
 app:
   mail:
     from: ${MAIL_FROM:${MAIL_USERNAME}}
+    enabled: false
