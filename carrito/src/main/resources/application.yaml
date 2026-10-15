@@ -60,7 +60,7 @@ management:
     db:
       enabled: false
     rabbit:
-      enabled: true
+      enabled: false
     mail:
       enabled: false
 

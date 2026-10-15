@@ -73,9 +73,9 @@ management:
     db:
       enabled: false
     rabbit:
-      enabled: true
+      enabled: false
     mail:
-      enabled: true
+      enabled: false
 
 app:
   mail:
