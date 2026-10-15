@@ -46,8 +46,16 @@ class Stack:
         return result
 
     def sql(self, service, query):
-        result = self.compose("exec", "-T", service + "-db", "psql", "-U", service, "-d", service,
-                              "-v", "ON_ERROR_STOP=1", "-Atc", query)
+        # El generador dinámico de Stack nombra cada contenedor de base de datos como [service]-db
+        db_container = service + "-db"
+        
+        # El usuario de la base de datos es igual al nombre del servicio
+        db_user = service
+        
+        result = self.compose("exec", "-T", db_container, "psql", "-U", db_user, "-d", service,
+                            "-t", "-c", query, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"SQL execution failed for {service} on container {db_container}")
         return result.stdout.strip()
 
     def url(self, service, port=8080):

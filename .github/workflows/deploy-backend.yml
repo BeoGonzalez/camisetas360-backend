@@ -254,7 +254,7 @@ jobs:
       }}
 
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     strategy:
       fail-fast: true
@@ -527,6 +527,7 @@ jobs:
       # update-service returned HTTP 200.
       #
       # It waits until ECS says the service has stabilized.
+      # Modificado para aumentar el timeout nativo de 10 minutos.
       # ----------------------------------------------------------
       - name: Wait for ECS service to become stable
         env:
@@ -536,12 +537,26 @@ jobs:
 
           echo "Waiting for ${ECS_SERVICE}..."
 
-          aws ecs wait services-stable \
-            --cluster "${ECS_CLUSTER}" \
-            --services "${ECS_SERVICE}" \
-            --region "${AWS_REGION}"
+          ATTEMPTS=0
+          MAX_ATTEMPTS=3
 
-          echo "${ECS_SERVICE} is stable."
+          while [ $ATTEMPTS -lt$MAX_ATTEMPTS ]; do
+            # El comando 'wait' retorna 0 si es exitoso, y 255 si alcanza su timeout de 10 minutos
+            if aws ecs wait services-stable \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --region "${AWS_REGION}"; then
+              
+              echo "${ECS_SERVICE} is stable."
+              exit 0
+            else
+              echo "Timeout nativo de AWS alcanzado. Ampliando paciencia y reintentando..."
+              ATTEMPTS=$((ATTEMPTS+1))
+            fi
+          done
+
+          echo "ERROR: El servicio ${ECS_SERVICE} no logró estabilizarse después de $((MAX_ATTEMPTS * 10)) minutos."
+          exit 1
 
       - name: Verify deployed service
         env:
