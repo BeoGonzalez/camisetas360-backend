@@ -265,37 +265,37 @@ jobs:
           - service: auth
             repository: camisetas360-auth
             task-family: camisetas360-auth
-            ecs-service: camisetas360-auth-service
+            ecs-service: auth-service
             container-name: auth
 
           - service: catalog
             repository: camisetas360-catalog
             task-family: camisetas360-catalog
-            ecs-service: camisetas360-catalog-service
+            ecs-service: catalog-service
             container-name: catalog
 
           - service: carrito
             repository: camisetas360-carrito
             task-family: camisetas360-carrito
-            ecs-service: camisetas360-carrito-service
+            ecs-service: carrito-service
             container-name: carrito
 
           - service: orders
             repository: camisetas360-orders
             task-family: camisetas360-orders
-            ecs-service: camisetas360-orders-service
+            ecs-service: orders-service
             container-name: orders
 
           - service: notifications
             repository: camisetas360-notifications
             task-family: camisetas360-notifications
-            ecs-service: camisetas360-notifications-service
+            ecs-service: notifications-service
             container-name: notifications
 
           - service: recommendation
             repository: camisetas360-recommendation
             task-family: camisetas360-recommendation
-            ecs-service: camisetas360-recommendation-service
+            ecs-service: recommendation-service
             container-name: recommendation
 
     environment:
