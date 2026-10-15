@@ -12,6 +12,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -21,7 +22,10 @@ class DefaultOrderEventInboxServiceTest {
 
     private final OrderEventParser parser = mock(OrderEventParser.class);
     private final OrderInboxRepository repository = mock(OrderInboxRepository.class);
+    private final RecommendationService recommendationService = mock(RecommendationService.class);
     private final DefaultOrderEventInboxService service = new DefaultOrderEventInboxService(parser, repository);
+    private final DefaultOrderEventInboxService serviceWithRecommendations =
+            new DefaultOrderEventInboxService(parser, repository, recommendationService);
 
     @Test
     @DisplayName("Should parse and persist valid event, returning true for new event")
@@ -42,7 +46,43 @@ class DefaultOrderEventInboxServiceTest {
     }
 
     @Test
-    @DisplayName("Should return false when repository reports duplicate event")
+    @DisplayName("Should trigger recommendations and mark processed for new event when RecommendationService is present")
+    void shouldTriggerRecommendationsAndMarkProcessedForNewEvent() {
+        UUID eventId = UUID.randomUUID();
+        long orderId = 42L;
+        byte[] body = "{\"eventId\":\"test\"}".getBytes(StandardCharsets.UTF_8);
+        ParsedOrderEvent parsed = new ParsedOrderEvent(eventId, orderId, 2);
+
+        when(parser.parse(body)).thenReturn(parsed);
+        when(repository.saveIfAbsent(eventId, orderId, new String(body, StandardCharsets.UTF_8))).thenReturn(true);
+
+        boolean result = serviceWithRecommendations.accept(body);
+
+        assertThat(result).isTrue();
+        verify(recommendationService).generateAndSave(parsed, new String(body, StandardCharsets.UTF_8));
+        verify(repository).markProcessed(eventId);
+    }
+
+    @Test
+    @DisplayName("Should not fail accept if recommendation generation throws")
+    void shouldNotFailAcceptIfRecommendationGenerationFails() {
+        UUID eventId = UUID.randomUUID();
+        long orderId = 42L;
+        byte[] body = "{\"eventId\":\"test\"}".getBytes(StandardCharsets.UTF_8);
+        ParsedOrderEvent parsed = new ParsedOrderEvent(eventId, orderId, 2);
+
+        when(parser.parse(body)).thenReturn(parsed);
+        when(repository.saveIfAbsent(eventId, orderId, new String(body, StandardCharsets.UTF_8))).thenReturn(true);
+        doThrow(new RuntimeException("AI error")).when(recommendationService)
+                .generateAndSave(parsed, new String(body, StandardCharsets.UTF_8));
+
+        boolean result = serviceWithRecommendations.accept(body);
+
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    @DisplayName("Should return false when repository reports duplicate event and skip recommendations")
     void shouldReturnFalseForDuplicateEvent() {
         UUID eventId = UUID.randomUUID();
         long orderId = 42L;
@@ -52,9 +92,10 @@ class DefaultOrderEventInboxServiceTest {
         when(parser.parse(body)).thenReturn(parsed);
         when(repository.saveIfAbsent(eventId, orderId, new String(body, StandardCharsets.UTF_8))).thenReturn(false);
 
-        boolean result = service.accept(body);
+        boolean result = serviceWithRecommendations.accept(body);
 
         assertThat(result).isFalse();
+        verifyNoInteractions(recommendationService);
     }
 
     @Test
@@ -68,6 +109,7 @@ class DefaultOrderEventInboxServiceTest {
                 .isInstanceOf(InvalidEventContractException.class);
 
         verifyNoInteractions(repository);
+        verifyNoInteractions(recommendationService);
     }
 }
 

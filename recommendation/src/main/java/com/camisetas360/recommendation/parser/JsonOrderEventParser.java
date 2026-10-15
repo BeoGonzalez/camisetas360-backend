@@ -5,6 +5,8 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -59,7 +61,17 @@ public class JsonOrderEventParser implements OrderEventParser {
             throw new InvalidEventContractException("Missing or empty items array");
         }
 
-        return new ParsedOrderEvent(eventId, orderId, itemsNode.size());
+        String userEmail = root.path("userEmail").asString(null);
+
+        List<String> items = new ArrayList<>();
+        for (JsonNode itemNode : itemsNode) {
+            String sku = itemNode.path("sku").asString("");
+            int quantity = itemNode.path("quantity").asInt(1);
+            if (!sku.isBlank()) {
+                items.add(sku + " (x" + quantity + ")");
+            }
+        }
+
+        return new ParsedOrderEvent(eventId, orderId, itemsNode.size(), userEmail, items);
     }
 }
-

@@ -8,6 +8,13 @@ spring:
   flyway:
     enabled: true
     clean-disabled: true
+  ai:
+    mistralai:
+      api-key: ${SPRING_AI_MISTRALAI_API_KEY:}
+      chat:
+        options:
+          model: ${SPRING_AI_MISTRALAI_CHAT_MODEL:mistral-small-latest}
+          temperature: 0.7
   jpa:
     hibernate:
       ddl-auto: validate
@@ -34,7 +41,7 @@ spring:
           max-interval: 5s
 
 server:
-  port: 8086
+  port: 8080
 
 management:
   endpoints:

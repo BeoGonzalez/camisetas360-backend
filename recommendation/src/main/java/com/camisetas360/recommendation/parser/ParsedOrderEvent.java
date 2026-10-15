@@ -1,5 +1,6 @@
 package com.camisetas360.recommendation.parser;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -8,8 +9,14 @@ import java.util.UUID;
 public record ParsedOrderEvent(
         UUID eventId,
         long orderId,
-        int itemCount
+        int itemCount,
+        String userEmail,
+        List<String> items
 ) {
+    public ParsedOrderEvent(UUID eventId, long orderId, int itemCount) {
+        this(eventId, orderId, itemCount, null, List.of());
+    }
+
     public ParsedOrderEvent {
         if (eventId == null) {
             throw new IllegalArgumentException("eventId cannot be null");
@@ -20,6 +27,7 @@ public record ParsedOrderEvent(
         if (itemCount <= 0) {
             throw new IllegalArgumentException("itemCount must be positive");
         }
+        items = items != null ? List.copyOf(items) : List.of();
     }
 }
 
