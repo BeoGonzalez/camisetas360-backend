@@ -59,7 +59,7 @@ management:
     readinessstate:
       enabled: true
     db:
-      enabled: false # Vital para evitar falsos "Unhealthy" por latencia de red en AWS RDS
+      enabled: false
     rabbit:
       enabled: false
     mail:

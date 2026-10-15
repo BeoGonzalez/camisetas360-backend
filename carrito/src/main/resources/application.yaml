@@ -58,9 +58,9 @@ management:
     readinessstate:
       enabled: true
     db:
-      enabled: false # Evita falsos "Unhealthy" por latencia de red en AWS RDS
+      enabled: false
     rabbit:
-      enabled: true # Activado ya que carrito sí interactúa con mensajería
+      enabled: true
     mail:
       enabled: false
 

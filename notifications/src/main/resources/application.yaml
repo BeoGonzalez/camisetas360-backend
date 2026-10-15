@@ -71,13 +71,12 @@ management:
     readinessstate:
       enabled: true
     db:
-      enabled: false # Evita falsos "Unhealthy" por latencia de red en AWS RDS
+      enabled: false
     rabbit:
-      enabled: true # Activado porque notifications procesa colas de mensajes
+      enabled: true
     mail:
-      enabled: true # Activado para verificar el subsistema de correo
+      enabled: true
 
 app:
   mail:
     from: ${MAIL_FROM:${MAIL_USERNAME}}
-    enabled: false

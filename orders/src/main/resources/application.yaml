@@ -79,8 +79,8 @@ management:
     readinessstate:
       enabled: true
     db:
-      enabled: false # Evita falsos "Unhealthy" por latencia de red en AWS RDS
+      enabled: false
     rabbit:
-      enabled: true # Activado porque orders utiliza mensajería de forma activa
+      enabled: true
     mail:
       enabled: false

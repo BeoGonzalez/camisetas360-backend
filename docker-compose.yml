@@ -118,34 +118,48 @@ services:
     networks:
       - notifications-database-network
 
+  recommendation-postgres:
+    image: postgres:17
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5437:5432"
+    environment:
+      POSTGRES_DB: ${RECOMMENDATION_POSTGRES_DB:?Define RECOMMENDATION_POSTGRES_DB}
+      POSTGRES_USER: ${RECOMMENDATION_POSTGRES_USER:?Define RECOMMENDATION_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${RECOMMENDATION_POSTGRES_PASSWORD:?Define RECOMMENDATION_POSTGRES_PASSWORD}
+    volumes:
+      - recommendation-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - recommendation-database-network
+
   rabbitmq:
     image: rabbitmq:4-management
     container_name: camisetas360-rabbitmq
     hostname: rabbitmq
     restart: unless-stopped
-
     ports:
       - "127.0.0.1:5672:5672"
       - "127.0.0.1:15672:15672"
-
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-camisetas360}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-camisetas360_dev}
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/camisetas360}
-
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
-
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 20s
-
     networks:
       - app-network
-
 
   mailpit:
     image: axllent/mailpit:v1.31.3
@@ -155,140 +169,105 @@ services:
     networks:
       - app-network
 
-
   auth:
     build:
       context: ./auth
-
     container_name: app-auth
     restart: unless-stopped
-
     ports:
       - "127.0.0.1:8083:8080"
-
     environment:
       <<: *resource-server-environment
-
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
       SPRING_DATASOURCE_URL: jdbc:postgresql://auth-postgres:5432/${AUTH_POSTGRES_DB:?Define AUTH_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${AUTH_POSTGRES_USER:?Define AUTH_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${AUTH_POSTGRES_PASSWORD:?Define AUTH_POSTGRES_PASSWORD}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
-
     depends_on:
       auth-postgres:
         condition: service_healthy
-
     networks:
       - app-network
       - auth-database-network
 
-
   catalog:
     build:
       context: ./catalog
-
     container_name: app-catalog
     restart: unless-stopped
-
     ports:
       - "127.0.0.1:8081:8080"
-
     environment:
       <<: *resource-server-environment
-
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
-
       SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-postgres:5432/${CATALOG_POSTGRES_DB:?Define CATALOG_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${CATALOG_POSTGRES_USER:?Define CATALOG_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${CATALOG_POSTGRES_PASSWORD:?Define CATALOG_POSTGRES_PASSWORD}
-
     depends_on:
       catalog-postgres:
         condition: service_healthy
-
     networks:
       - app-network
       - catalog-database-network
 
-
   carrito:
     build:
       context: ./carrito
-
     container_name: app-carrito
     restart: unless-stopped
-
     ports:
       - "127.0.0.1:8082:8080"
-
     environment:
       <<: [*rabbitmq-environment, *resource-server-environment]
-
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
       SPRING_DATASOURCE_URL: jdbc:postgresql://carrito-postgres:5432/${CARRITO_POSTGRES_DB:?Define CARRITO_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${CARRITO_POSTGRES_USER:?Define CARRITO_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${CARRITO_POSTGRES_PASSWORD:?Define CARRITO_POSTGRES_PASSWORD}
-
     depends_on:
       carrito-postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-
     networks:
       - app-network
       - carrito-database-network
 
-
   orders:
     build:
       context: ./orders
-
     container_name: app-orders
     restart: unless-stopped
-
     ports:
       - "127.0.0.1:8084:8080"
-
     environment:
       <<: [*rabbitmq-environment, *resource-server-environment]
-
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
-
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?Define POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?Define POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
-
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-
     networks:
       - app-network
       - database-network
 
-
   notifications:
     build:
       context: ./notifications
-
     container_name: app-notifications
     restart: unless-stopped
-
     ports:
       - "127.0.0.1:8085:8080"
-
     environment:
       <<: [*rabbitmq-environment, *mail-environment, *resource-server-environment]
-
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
       SPRING_DATASOURCE_URL: jdbc:postgresql://notifications-postgres:5432/${NOTIFICATIONS_POSTGRES_DB:?Define NOTIFICATIONS_POSTGRES_DB}
@@ -299,7 +278,6 @@ services:
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "false"
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "false"
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_REQUIRED: "false"
-
     depends_on:
       notifications-postgres:
         condition: service_healthy
@@ -307,11 +285,33 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
-
     networks:
       - app-network
       - notifications-database-network
 
+  recommendation:
+    build:
+      context: ./recommendation
+    container_name: app-recommendation
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8086:8080"
+    environment:
+      <<: [*rabbitmq-environment, *resource-server-environment]
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: local
+      SPRING_DATASOURCE_URL: jdbc:postgresql://recommendation-postgres:5432/${RECOMMENDATION_POSTGRES_DB:?Define RECOMMENDATION_POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${RECOMMENDATION_POSTGRES_USER:?Define RECOMMENDATION_POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${RECOMMENDATION_POSTGRES_PASSWORD:?Define RECOMMENDATION_POSTGRES_PASSWORD}
+      SPRING_AI_MISTRALAI_API_KEY: ${SPRING_AI_MISTRALAI_API_KEY:-tu_api_key_local}
+    depends_on:
+      recommendation-postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+      - recommendation-database-network
 
 volumes:
   rabbitmq-data:
@@ -320,7 +320,7 @@ volumes:
   auth-postgres-data:
   carrito-postgres-data:
   notifications-postgres-data:
-
+  recommendation-postgres-data:
 
 networks:
   database-network:
@@ -334,4 +334,6 @@ networks:
   carrito-database-network:
     driver: bridge
   notifications-database-network:
+    driver: bridge
+  recommendation-database-network:
     driver: bridge
