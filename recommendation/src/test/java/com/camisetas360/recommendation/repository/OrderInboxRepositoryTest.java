@@ -51,6 +51,16 @@ class OrderInboxRepositoryTest {
     }
 
     @Test
+    @DisplayName("Should execute update query when marking event as processed")
+    void shouldExecuteUpdateWhenMarkingProcessed() {
+        UUID eventId = UUID.randomUUID();
+
+        repository.markProcessed(eventId);
+
+        verify(jdbcTemplate).update(anyString(), eq(eventId));
+    }
+
+    @Test
     @DisplayName("Should propagate database access failure")
     void shouldPropagateDatabaseFailure() {
         UUID eventId = UUID.randomUUID();
@@ -64,4 +74,3 @@ class OrderInboxRepositoryTest {
                 .isInstanceOf(DataAccessResourceFailureException.class);
     }
 }
-

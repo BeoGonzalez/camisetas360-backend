@@ -17,5 +17,11 @@ public interface OrderInboxRepository {
      * @return true if the event was inserted, false if it was a duplicate and ignored
      */
     boolean saveIfAbsent(UUID eventId, long orderId, String rawPayload);
-}
 
+    /**
+     * Marks an event in the inbox as processed.
+     *
+     * @param eventId unique event identifier
+     */
+    default void markProcessed(UUID eventId) {}
+}

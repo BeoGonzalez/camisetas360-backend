@@ -18,6 +18,12 @@ public class JdbcOrderInboxRepository implements OrderInboxRepository {
             VALUES (?, ?, CAST(? AS jsonb)) ON CONFLICT (event_id) DO NOTHING
             """;
 
+    private static final String MARK_PROCESSED_SQL = """
+            UPDATE recommendation_order_inbox
+            SET processed_at = CURRENT_TIMESTAMP
+            WHERE event_id = ?
+            """;
+
     private final JdbcTemplate jdbcTemplate;
 
     public JdbcOrderInboxRepository(JdbcTemplate jdbcTemplate) {
@@ -28,5 +34,9 @@ public class JdbcOrderInboxRepository implements OrderInboxRepository {
     public boolean saveIfAbsent(UUID eventId, long orderId, String rawPayload) {
         return jdbcTemplate.update(INSERT_INBOX_SQL, eventId, orderId, rawPayload) == 1;
     }
-}
 
+    @Override
+    public void markProcessed(UUID eventId) {
+        jdbcTemplate.update(MARK_PROCESSED_SQL, eventId);
+    }
+}
