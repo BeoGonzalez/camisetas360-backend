@@ -46,8 +46,24 @@ class Stack:
         return result
 
     def sql(self, service, query):
-        result = self.compose("exec", "-T", service + "-db", "psql", "-U", service, "-d", service,
-                              "-v", "ON_ERROR_STOP=1", "-Atc", query)
+        # Mapeo exacto de los nombres de servicios de bases de datos en tu docker-compose.yml
+        db_service_map = {
+            "orders": "postgres",
+            "auth": "auth-postgres",
+            "catalog": "catalog-postgres",
+            "carrito": "carrito-postgres",
+            "notifications": "notifications-postgres",
+            "recommendation": "recommendation-postgres"
+        }
+        db_container = db_service_map.get(service, service + "-postgres")
+        
+        # También ajusta el usuario de la BD si es necesario para 'orders' ('postgres' en vez de 'orders')
+        db_user = "postgres" if service == "orders" else service
+        
+        result = self.compose("exec", "-T", db_container, "psql", "-U", db_user, "-d", service,
+                              "-t", "-c", query, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"SQL execution failed for {service} on container {db_container}")
         return result.stdout.strip()
 
     def url(self, service, port=8080):
