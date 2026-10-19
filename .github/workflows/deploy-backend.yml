@@ -482,6 +482,11 @@ jobs:
       #
       # - SERVER_PORT: debe coincidir con el target group del NLB.
       # - SPRING_DATASOURCE_*: Aurora (output database_endpoint).
+      #   Todos los servicios comparten la base "ecommerce", pero cada
+      #   uno usa su propio schema (currentSchema + SPRING_FLYWAY_SCHEMAS).
+      #   Sin esto, todos comparten flyway_schema_history en "public" y
+      #   las migraciones V1 de cada servicio chocan entre si
+      #   ("Migration checksum mismatch for migration version 1").
       # - SPRING_RABBITMQ_*: RabbitMQ a traves del NLB (puerto 5672).
       # - awslogs: logs en CloudWatch (/ecs/<servicio>).
       #
@@ -515,7 +520,8 @@ jobs:
           jq \
             --arg container "${CONTAINER_NAME}" \
             --arg port "${SERVER_PORT}" \
-            --arg dbUrl "jdbc:postgresql://${DB_ENDPOINT}:5432/${DB_NAME}" \
+            --arg dbUrl "jdbc:postgresql://${DB_ENDPOINT}:5432/${DB_NAME}?currentSchema=${SERVICE}" \
+            --arg schema "${SERVICE}" \
             --arg dbUser "${DB_USERNAME}" \
             --arg dbPass "${DB_PASSWORD}" \
             --arg rabbitHost "${NLB_DNS}" \
@@ -527,6 +533,7 @@ jobs:
             [
               {name: "SERVER_PORT", value: $port},
               {name: "SPRING_DATASOURCE_URL", value: $dbUrl},
+              {name: "SPRING_FLYWAY_SCHEMAS", value: $schema},
               {name: "SPRING_DATASOURCE_USERNAME", value: $dbUser},
               {name: "SPRING_DATASOURCE_PASSWORD", value: $dbPass},
               {name: "SPRING_RABBITMQ_HOST", value: $rabbitHost},
@@ -609,6 +616,7 @@ jobs:
             --service "${ECS_SERVICE}" \
             --task-definition "${TASK_DEFINITION_ARN}" \
             --desired-count "${DESIRED_COUNT}" \
+            --health-check-grace-period-seconds 180 \
             --force-new-deployment \
             --region "${AWS_REGION}" \
             >/dev/null
