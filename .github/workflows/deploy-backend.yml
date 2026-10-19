@@ -503,8 +503,8 @@ jobs:
           SERVICE: ${{ matrix.service }}
           SERVER_PORT: ${{ matrix.port }}
           DB_ENDPOINT: ${{ vars.DB_ENDPOINT }}
-          DB_NAME: ${{ vars.DB_NAME || 'camisetas360' }}
-          DB_USERNAME: ${{ vars.DB_USERNAME || 'postgres' }}
+          DB_NAME: ${{ vars.DB_NAME || 'ecommerce' }}
+          DB_USERNAME: ${{ vars.DB_USERNAME || 'dbadmin' }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           NLB_DNS: ${{ vars.NLB_DNS }}
           RABBITMQ_USERNAME: ${{ vars.RABBITMQ_USERNAME || 'admin' }}
