@@ -509,10 +509,11 @@ jobs:
           NLB_DNS: ${{ vars.NLB_DNS }}
           RABBITMQ_USERNAME: ${{ vars.RABBITMQ_USERNAME || 'admin' }}
           RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
-          # Nuevas variables de correo agregadas con valores por defecto para evitar caídas en otros microservicios
           MAIL_USERNAME: ${{ vars.MAIL_USERNAME || 'dummy' }}
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD || 'dummy' }}
           MAIL_FROM: ${{ vars.MAIL_FROM || 'dummy' }}
+          # NUEVA VARIABLE PARA MISTRAL AI
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY || 'dummy_api_key' }}
         run: |
           set -euo pipefail
 
@@ -536,6 +537,7 @@ jobs:
             --arg mailUser "${MAIL_USERNAME}" \
             --arg mailPass "${MAIL_PASSWORD}" \
             --arg mailFrom "${MAIL_FROM}" \
+            --arg mistralKey "${MISTRAL_API_KEY}" \
             '
             [
               {name: "SERVER_PORT", value: $port},
@@ -549,7 +551,8 @@ jobs:
               {name: "SPRING_RABBITMQ_PASSWORD", value: $rabbitPass},
               {name: "MAIL_USERNAME", value: $mailUser},
               {name: "MAIL_PASSWORD", value: $mailPass},
-              {name: "MAIL_FROM", value: $mailFrom}
+              {name: "MAIL_FROM", value: $mailFrom},
+              {name: "SPRING_AI_MISTRALAI_API_KEY", value: $mistralKey}
             ] as $injected
             |
             (.containerDefinitions[] | select(.name == $container)) |= (
