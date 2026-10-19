@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       desired_count:
-        description: "Tareas por servicio despues del deploy (los servicios nacen en 0 con Terraform)"
+        description: "Tareas por servicio despues del deploy"
         required: false
         default: "1"
         type: string
@@ -503,12 +503,16 @@ jobs:
           SERVICE: ${{ matrix.service }}
           SERVER_PORT: ${{ matrix.port }}
           DB_ENDPOINT: ${{ vars.DB_ENDPOINT }}
-          DB_NAME: ${{ vars.DB_NAME || 'ecommerce' }}
-          DB_USERNAME: ${{ vars.DB_USERNAME || 'dbadmin' }}
+          DB_NAME: ${{ vars.DB_NAME || 'camisetas360' }}
+          DB_USERNAME: ${{ vars.DB_USERNAME || 'postgres' }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           NLB_DNS: ${{ vars.NLB_DNS }}
           RABBITMQ_USERNAME: ${{ vars.RABBITMQ_USERNAME || 'admin' }}
           RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          # Nuevas variables de correo agregadas con valores por defecto para evitar caídas en otros microservicios
+          MAIL_USERNAME: ${{ vars.MAIL_USERNAME || 'dummy' }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD || 'dummy' }}
+          MAIL_FROM: ${{ vars.MAIL_FROM || 'dummy' }}
         run: |
           set -euo pipefail
 
@@ -529,6 +533,9 @@ jobs:
             --arg rabbitPass "${RABBITMQ_PASSWORD}" \
             --arg logGroup "/ecs/${SERVICE}" \
             --arg region "${AWS_REGION}" \
+            --arg mailUser "${MAIL_USERNAME}" \
+            --arg mailPass "${MAIL_PASSWORD}" \
+            --arg mailFrom "${MAIL_FROM}" \
             '
             [
               {name: "SERVER_PORT", value: $port},
@@ -539,7 +546,10 @@ jobs:
               {name: "SPRING_RABBITMQ_HOST", value: $rabbitHost},
               {name: "SPRING_RABBITMQ_PORT", value: "5672"},
               {name: "SPRING_RABBITMQ_USERNAME", value: $rabbitUser},
-              {name: "SPRING_RABBITMQ_PASSWORD", value: $rabbitPass}
+              {name: "SPRING_RABBITMQ_PASSWORD", value: $rabbitPass},
+              {name: "MAIL_USERNAME", value: $mailUser},
+              {name: "MAIL_PASSWORD", value: $mailPass},
+              {name: "MAIL_FROM", value: $mailFrom}
             ] as $injected
             |
             (.containerDefinitions[] | select(.name == $container)) |= (
