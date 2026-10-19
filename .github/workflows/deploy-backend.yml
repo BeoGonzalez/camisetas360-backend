@@ -549,6 +549,7 @@ jobs:
               {name: "SPRING_RABBITMQ_PORT", value: "5672"},
               {name: "SPRING_RABBITMQ_USERNAME", value: $rabbitUser},
               {name: "SPRING_RABBITMQ_PASSWORD", value: $rabbitPass},
+              {name: "SPRING_RABBITMQ_VIRTUAL_HOST", value: "/"},
               {name: "MAIL_USERNAME", value: $mailUser},
               {name: "MAIL_PASSWORD", value: $mailPass},
               {name: "MAIL_FROM", value: $mailFrom},
