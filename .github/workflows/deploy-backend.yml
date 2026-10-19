@@ -6,6 +6,12 @@ on:
       - main
 
   workflow_dispatch:
+    inputs:
+      desired_count:
+        description: "Tareas por servicio despues del deploy (los servicios nacen en 0 con Terraform)"
+        required: false
+        default: "1"
+        type: string
 
 permissions:
   contents: read
@@ -17,7 +23,8 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
-  ECS_CLUSTER: camisetas360-backend-cluster
+  # Cluster creado por Terraform (ecs.tf)
+  ECS_CLUSTER: ecommerce-cluster
 
 defaults:
   run:
@@ -33,6 +40,8 @@ jobs:
 
   # ============================================================
   # 2. Build immutable Docker images and push them to ECR
+  #
+  # Los repositorios camisetas360-* los crea Terraform.
   # ============================================================
   build-images:
     name: Build ${{ matrix.service }}
@@ -78,13 +87,11 @@ jobs:
           persist-credentials: false
 
       # ----------------------------------------------------------
-      # AWS Academy credentials
+      # AWS Academy / Learner Lab credentials
       #
-      # AWS_SESSION_TOKEN is required because Academy credentials
-      # are temporary STS credentials.
-      #
-      # In a normal AWS production account, GitHub OIDC should
-      # replace long-lived/static GitHub secrets.
+      # Son credenciales temporales (STS): expiran cuando termina la
+      # sesion del lab. Hay que actualizar los tres secrets cada vez
+      # que se inicia una sesion nueva.
       # ----------------------------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -98,7 +105,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          aws sts get-caller-identity
+          if ! aws sts get-caller-identity; then
+            echo "::error::Credenciales AWS invalidas o expiradas. Actualiza AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_SESSION_TOKEN desde AWS Details del Learner Lab."
+            exit 1
+          fi
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -148,11 +158,8 @@ jobs:
           ls -lh "${SERVICE}/target"
 
       # ----------------------------------------------------------
-      # Validate repository exists.
-      #
-      # Infrastructure creation belongs outside the deployment
-      # pipeline, so this workflow fails instead of silently
-      # creating an ECR repository.
+      # El repositorio ECR debe existir (lo crea Terraform). Este
+      # workflow falla en vez de crearlo en silencio.
       # ----------------------------------------------------------
       - name: Verify ECR repository
         env:
@@ -166,16 +173,8 @@ jobs:
             >/dev/null
 
       # ----------------------------------------------------------
-      # We use Git SHA instead of :latest.
-      #
-      # This provides:
-      # - immutable releases
-      # - auditability
-      # - deterministic rollback
-      # - compatibility with immutable ECR repositories
-      #
-      # The existence check makes reruns for the same commit
-      # idempotent.
+      # Tag = Git SHA (no :latest): releases inmutables, auditoria y
+      # rollback determinista. Si la imagen ya existe se reutiliza.
       # ----------------------------------------------------------
       - name: Build and push immutable image
         env:
@@ -230,16 +229,15 @@ jobs:
             --output table
 
   # ============================================================
-  # 3. Deploy the new images to ECS
+  # 3. Deploy the new images to ECS Fargate
   #
-  # max-parallel = 1 is intentional.
+  # Los servicios, task definitions, target groups y el NLB los
+  # crea Terraform (ecs.tf y service_lb.tf). Aqui solo se registra
+  # una revision nueva de la task definition y se actualiza el
+  # servicio.
   #
-  # We currently have only:
-  #   2 x t8i.medium
-  #   = 4 vCPU / 8 GiB RAM gross
-  #
-  # Updating one microservice at a time reduces temporary
-  # capacity pressure during rolling deployments.
+  # max-parallel = 1 evita saturar el lab con muchos despliegues
+  # simultaneos (limite de presupuesto y de tareas).
   # ============================================================
   deploy-services:
     name: Deploy ${{ matrix.service }} to ECS
@@ -260,43 +258,51 @@ jobs:
       fail-fast: true
       max-parallel: 1
 
+      # port = containerPort de la task definition y puerto del
+      # target group / listener del NLB (service_lb.tf).
       matrix:
         include:
           - service: auth
             repository: camisetas360-auth
-            task-family: camisetas360-auth
+            task-family: auth-task
             ecs-service: auth-service
             container-name: auth
+            port: "8081"
 
           - service: catalog
             repository: camisetas360-catalog
-            task-family: camisetas360-catalog
+            task-family: catalog-task
             ecs-service: catalog-service
             container-name: catalog
+            port: "8080"
 
           - service: carrito
             repository: camisetas360-carrito
-            task-family: camisetas360-carrito
+            task-family: carrito-task
             ecs-service: carrito-service
             container-name: carrito
+            port: "8083"
 
           - service: orders
             repository: camisetas360-orders
-            task-family: camisetas360-orders
+            task-family: orders-task
             ecs-service: orders-service
             container-name: orders
+            port: "8082"
 
           - service: notifications
             repository: camisetas360-notifications
-            task-family: camisetas360-notifications
+            task-family: notifications-task
             ecs-service: notifications-service
             container-name: notifications
+            port: "8085"
 
           - service: recommendation
             repository: camisetas360-recommendation
-            task-family: camisetas360-recommendation
+            task-family: recommendation-task
             ecs-service: recommendation-service
             container-name: recommendation
+            port: "8084"
 
     environment:
       name: production
@@ -315,9 +321,18 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          set -euo pipefail
+
+          if ! aws sts get-caller-identity; then
+            echo "::error::Credenciales AWS invalidas o expiradas. Actualiza los secrets desde AWS Details del Learner Lab."
+            exit 1
+          fi
+
       # ----------------------------------------------------------
-      # Confirm that the cluster/service/task definition actually
-      # exist before changing anything.
+      # Confirma que el cluster, el servicio y la task definition
+      # creados por Terraform existen antes de cambiar nada.
       # ----------------------------------------------------------
       - name: Verify ECS resources
         env:
@@ -327,11 +342,18 @@ jobs:
           set -euo pipefail
 
           echo "Checking ECS cluster..."
-          aws ecs describe-clusters \
-            --clusters "${ECS_CLUSTER}" \
-            --region "${AWS_REGION}" \
-            --query 'clusters[0].[clusterName,status,registeredContainerInstancesCount]' \
-            --output table
+          CLUSTER_STATUS="$(
+            aws ecs describe-clusters \
+              --clusters "${ECS_CLUSTER}" \
+              --region "${AWS_REGION}" \
+              --query 'clusters[0].status' \
+              --output text
+          )"
+
+          if [ "${CLUSTER_STATUS}" != "ACTIVE" ]; then
+            echo "::error::El cluster ${ECS_CLUSTER} no esta ACTIVE (estado: ${CLUSTER_STATUS}). Ejecuta terraform apply."
+            exit 1
+          fi
 
           echo "Checking ECS service..."
           STATUS="$(
@@ -344,7 +366,7 @@ jobs:
           )"
 
           if [ "${STATUS}" != "ACTIVE" ]; then
-            echo "ECS service ${ECS_SERVICE} is not ACTIVE."
+            echo "::error::El servicio ${ECS_SERVICE} no esta ACTIVE (estado: ${STATUS})."
             exit 1
           fi
 
@@ -354,10 +376,6 @@ jobs:
             --region "${AWS_REGION}" \
             >/dev/null
 
-      # ----------------------------------------------------------
-      # Build the exact ECR image URI corresponding to the
-      # current Git commit.
-      # ----------------------------------------------------------
       - name: Resolve image URI
         id: image
         env:
@@ -386,21 +404,6 @@ jobs:
 
           echo "uri=${IMAGE}" >> "${GITHUB_OUTPUT}"
 
-      # ----------------------------------------------------------
-      # Retrieve the latest ACTIVE task-definition revision.
-      #
-      # This preserves:
-      # - CPU
-      # - memory
-      # - ports
-      # - IAM roles
-      # - environment variables
-      # - secrets
-      # - CloudWatch logging
-      # - health checks
-      #
-      # Only the container image changes.
-      # ----------------------------------------------------------
       - name: Download current ECS task definition
         env:
           TASK_FAMILY: ${{ matrix.task-family }}
@@ -427,10 +430,9 @@ jobs:
             >/dev/null
 
       # ----------------------------------------------------------
-      # AWS describe-task-definition returns several read-only
-      # properties which register-task-definition does not accept.
-      #
-      # Remove those fields and change only the image.
+      # describe-task-definition devuelve campos de solo lectura que
+      # register-task-definition no acepta. Se eliminan y se cambia
+      # solo la imagen.
       # ----------------------------------------------------------
       - name: Render new ECS task definition
         env:
@@ -470,17 +472,99 @@ jobs:
              | select(.name == $container)
              | {
                  name: .name,
-                 image: .image,
-                 cpu: .cpu,
-                 memory: .memory,
-                 memoryReservation: .memoryReservation
+                 image: .image
                }' \
             new-task-definition.json
 
       # ----------------------------------------------------------
-      # Every deployment creates a new immutable ECS task
-      # definition revision.
+      # Las task definitions de Terraform no traen variables de
+      # entorno ni logs. Se inyectan aqui:
+      #
+      # - SERVER_PORT: debe coincidir con el target group del NLB.
+      # - SPRING_DATASOURCE_*: Aurora (output database_endpoint).
+      # - SPRING_RABBITMQ_*: RabbitMQ a traves del NLB (puerto 5672).
+      # - awslogs: logs en CloudWatch (/ecs/<servicio>).
+      #
+      # Variables del repositorio (vars): DB_ENDPOINT, NLB_DNS,
+      # y opcionalmente DB_NAME, DB_USERNAME, RABBITMQ_USERNAME.
+      # Secrets: DB_PASSWORD, RABBITMQ_PASSWORD.
+      #
+      # Nota: en un entorno real conviene usar "secrets" de ECS con
+      # Secrets Manager en vez de valores en texto plano.
       # ----------------------------------------------------------
+      - name: Inject runtime configuration
+        env:
+          CONTAINER_NAME: ${{ matrix.container-name }}
+          SERVICE: ${{ matrix.service }}
+          SERVER_PORT: ${{ matrix.port }}
+          DB_ENDPOINT: ${{ vars.DB_ENDPOINT }}
+          DB_NAME: ${{ vars.DB_NAME || 'ecommerce' }}
+          DB_USERNAME: ${{ vars.DB_USERNAME || 'dbadmin' }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          NLB_DNS: ${{ vars.NLB_DNS }}
+          RABBITMQ_USERNAME: ${{ vars.RABBITMQ_USERNAME || 'admin' }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          : "${DB_ENDPOINT:?Falta la variable DB_ENDPOINT del repositorio (terraform output database_endpoint)}"
+          : "${NLB_DNS:?Falta la variable NLB_DNS del repositorio (terraform output internal_nlb_dns)}"
+          : "${DB_PASSWORD:?Falta el secret DB_PASSWORD}"
+          : "${RABBITMQ_PASSWORD:?Falta el secret RABBITMQ_PASSWORD}"
+
+          jq \
+            --arg container "${CONTAINER_NAME}" \
+            --arg port "${SERVER_PORT}" \
+            --arg dbUrl "jdbc:postgresql://${DB_ENDPOINT}:5432/${DB_NAME}" \
+            --arg dbUser "${DB_USERNAME}" \
+            --arg dbPass "${DB_PASSWORD}" \
+            --arg rabbitHost "${NLB_DNS}" \
+            --arg rabbitUser "${RABBITMQ_USERNAME}" \
+            --arg rabbitPass "${RABBITMQ_PASSWORD}" \
+            --arg logGroup "/ecs/${SERVICE}" \
+            --arg region "${AWS_REGION}" \
+            '
+            [
+              {name: "SERVER_PORT", value: $port},
+              {name: "SPRING_DATASOURCE_URL", value: $dbUrl},
+              {name: "SPRING_DATASOURCE_USERNAME", value: $dbUser},
+              {name: "SPRING_DATASOURCE_PASSWORD", value: $dbPass},
+              {name: "SPRING_RABBITMQ_HOST", value: $rabbitHost},
+              {name: "SPRING_RABBITMQ_PORT", value: "5672"},
+              {name: "SPRING_RABBITMQ_USERNAME", value: $rabbitUser},
+              {name: "SPRING_RABBITMQ_PASSWORD", value: $rabbitPass}
+            ] as $injected
+            |
+            (.containerDefinitions[] | select(.name == $container)) |= (
+              .environment = (
+                ((.environment // [])
+                  | map(select(.name as $n | ($injected | map(.name) | index($n)) | not)))
+                + $injected
+              )
+              | .logConfiguration = {
+                  logDriver: "awslogs",
+                  options: {
+                    "awslogs-group": $logGroup,
+                    "awslogs-region": $region,
+                    "awslogs-stream-prefix": "ecs",
+                    "awslogs-create-group": "true"
+                  }
+                }
+            )
+            ' \
+            new-task-definition.json \
+            > new-task-definition.injected.json
+
+          mv new-task-definition.injected.json new-task-definition.json
+
+          echo "Environment variable names configured for ${CONTAINER_NAME}:"
+          jq -r \
+            --arg container "${CONTAINER_NAME}" \
+            '.containerDefinitions[]
+             | select(.name == $container)
+             | .environment[].name' \
+            new-task-definition.json
+
       - name: Register new task definition revision
         id: register
         run: |
@@ -500,20 +584,31 @@ jobs:
           echo "arn=${TASK_DEFINITION_ARN}" >> "${GITHUB_OUTPUT}"
 
       # ----------------------------------------------------------
-      # ECS replaces the old task with a task based on the new
-      # revision. The EC2 hosts themselves are not touched.
+      # Terraform crea los servicios con desired_count = 0. Si no se
+      # sube el contador, el deploy "termina bien" sin correr nada.
+      # Por eso se fija el desired-count aqui (por defecto 1).
+      #
+      # Requiere en Terraform, dentro de cada aws_ecs_service backend:
+      #   lifecycle { ignore_changes = [task_definition, desired_count] }
       # ----------------------------------------------------------
       - name: Deploy task definition to ECS service
         env:
           ECS_SERVICE: ${{ matrix.ecs-service }}
           TASK_DEFINITION_ARN: ${{ steps.register.outputs.arn }}
+          DESIRED_COUNT: ${{ inputs.desired_count || '1' }}
         run: |
           set -euo pipefail
+
+          if ! [[ "${DESIRED_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::desired_count debe ser un entero mayor a 0 (recibido: ${DESIRED_COUNT})."
+            exit 1
+          fi
 
           aws ecs update-service \
             --cluster "${ECS_CLUSTER}" \
             --service "${ECS_SERVICE}" \
             --task-definition "${TASK_DEFINITION_ARN}" \
+            --desired-count "${DESIRED_COUNT}" \
             --force-new-deployment \
             --region "${AWS_REGION}" \
             >/dev/null
@@ -521,13 +616,14 @@ jobs:
           echo "Deployment started:"
           echo "Service: ${ECS_SERVICE}"
           echo "Task definition: ${TASK_DEFINITION_ARN}"
+          echo "Desired count: ${DESIRED_COUNT}"
 
       # ----------------------------------------------------------
-      # The workflow does not report success simply because
-      # update-service returned HTTP 200.
-      #
-      # It waits until ECS says the service has stabilized.
-      # Modificado para aumentar el timeout nativo de 10 minutos.
+      # Espera a que ECS declare el servicio estable (las tareas
+      # pasan el health check del target group del NLB). El comando
+      # wait corta a los 10 minutos, por eso se reintenta hasta 3
+      # veces. Si falla, imprime eventos y motivo de las tareas
+      # detenidas para poder diagnosticar.
       # ----------------------------------------------------------
       - name: Wait for ECS service to become stable
         env:
@@ -541,29 +637,50 @@ jobs:
           MAX_ATTEMPTS=3
 
           while (( ATTEMPTS < MAX_ATTEMPTS )); do
-            # El comando 'wait' retorna 0 si es exitoso, y 255 si alcanza su timeout de 10 minutos
             if aws ecs wait services-stable \
               --cluster "${ECS_CLUSTER}" \
               --services "${ECS_SERVICE}" \
               --region "${AWS_REGION}"; then
-              
+
               echo "${ECS_SERVICE} is stable."
               exit 0
             else
               ATTEMPTS=$((ATTEMPTS + 1))
-              echo "Intento $ATTEMPTS de $MAX_ATTEMPTS alcanzado. El servicio aún no se estabiliza. Reintentando..."
+              echo "Intento ${ATTEMPTS} de ${MAX_ATTEMPTS}: el servicio aun no se estabiliza."
             fi
           done
 
-          echo "ERROR: El servicio ${ECS_SERVICE} no logró estabilizarse después de $((MAX_ATTEMPTS * 10)) minutos."
+          echo "::error::El servicio ${ECS_SERVICE} no se estabilizo despues de $((MAX_ATTEMPTS * 10)) minutos."
 
-          # Diagnóstico en vivo si falla
+          echo "--- Ultimos eventos del servicio ---"
           aws ecs describe-services \
             --cluster "${ECS_CLUSTER}" \
             --services "${ECS_SERVICE}" \
             --region "${AWS_REGION}" \
+            --query 'services[0].events[:10].message' \
             --output json
-            
+
+          echo "--- Tareas detenidas recientemente ---"
+          STOPPED="$(
+            aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${ECS_SERVICE}" \
+              --desired-status STOPPED \
+              --region "${AWS_REGION}" \
+              --query 'taskArns[:3]' \
+              --output text
+          )"
+
+          if [ -n "${STOPPED}" ] && [ "${STOPPED}" != "None" ]; then
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${STOPPED} \
+              --region "${AWS_REGION}" \
+              --query 'tasks[].{Reason:stoppedReason,Containers:containers[].{Name:name,Reason:reason,ExitCode:exitCode}}' \
+              --output json
+          fi
+
           exit 1
 
       - name: Verify deployed service
@@ -587,6 +704,29 @@ jobs:
               }
             ' \
             --output table
+
+          DESIRED="$(
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --region "${AWS_REGION}" \
+              --query 'services[0].desiredCount' \
+              --output text
+          )"
+
+          RUNNING="$(
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --region "${AWS_REGION}" \
+              --query 'services[0].runningCount' \
+              --output text
+          )"
+
+          if [ "${DESIRED}" -lt 1 ] || [ "${RUNNING}" -ne "${DESIRED}" ]; then
+            echo "::error::${ECS_SERVICE} no esta corriendo todas sus tareas (running=${RUNNING}, desired=${DESIRED})."
+            exit 1
+          fi
 
   # ============================================================
   # 4. Final deployment gate
@@ -627,15 +767,15 @@ jobs:
             echo
             echo "- Environment: production"
             echo "- AWS region: ${AWS_REGION}"
-            echo "- ECS cluster: ${ECS_CLUSTER}"
+            echo "- ECS cluster: ${ECS_CLUSTER} (Fargate)"
             echo "- Git commit: \`${GITHUB_SHA}\`"
             echo "- Result: successful"
             echo
             echo "Services:"
-            echo "- auth"
-            echo "- catalog"
-            echo "- carrito"
-            echo "- orders"
-            echo "- notifications"
-            echo "- recommendation"
+            echo "- auth (8081)"
+            echo "- catalog (8080)"
+            echo "- carrito (8083)"
+            echo "- orders (8082)"
+            echo "- notifications (8085)"
+            echo "- recommendation (8084)"
           } >> "${GITHUB_STEP_SUMMARY}"
