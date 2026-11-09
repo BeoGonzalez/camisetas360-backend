@@ -18,6 +18,10 @@ x-mail-environment: &mail-environment
 
 services:
 
+  # ============================================================
+  # BASES DE DATOS (POSTGRESQL 17 AISLADAS POR SERVICIO)
+  # ============================================================
+
   postgres:
     image: postgres:17
     restart: unless-stopped
@@ -138,6 +142,30 @@ services:
     networks:
       - recommendation-database-network
 
+  pago-postgres:
+    image: postgres:17
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5438:5432"
+    environment:
+      POSTGRES_DB: ${PAGO_POSTGRES_DB:?Define PAGO_POSTGRES_DB}
+      POSTGRES_USER: ${PAGO_POSTGRES_USER:?Define PAGO_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${PAGO_POSTGRES_PASSWORD:?Define PAGO_POSTGRES_PASSWORD}
+    volumes:
+      - pago-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - pago-database-network
+
+  # ============================================================
+  # BROKERS Y SERVICIOS COMPARTIDOS
+  # ============================================================
+
   rabbitmq:
     image: rabbitmq:4-management
     container_name: camisetas360-rabbitmq
@@ -169,6 +197,84 @@ services:
     networks:
       - app-network
 
+  # ============================================================
+  # APACHE KAFKA (MODO KRAFT SIN ZOOKEEPER)
+  # ============================================================
+
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: camisetas360-kafka
+    hostname: kafka
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092,PLAINTEXT_HOST://127.0.0.1:29092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - app-network
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    container_name: camisetas360-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - app-network
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        echo "Creando tópicos de pago en Kafka..."
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic pago.intento-registrado --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic pago.autorizado --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic pago.rechazado --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic pago.fraude-detectado --partitions 3 --replication-factor 1
+        echo "Tópicos disponibles en Kafka:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: camisetas360-kafka-ui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: camisetas360-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - app-network
+    profiles:
+      - tools
+
+  # ============================================================
+  # MICROSERVICIOS SPRING BOOT
+  # ============================================================
+
   auth:
     build:
       context: ./auth
@@ -184,6 +290,12 @@ services:
       SPRING_DATASOURCE_USERNAME: ${AUTH_POSTGRES_USER:?Define AUTH_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${AUTH_POSTGRES_PASSWORD:?Define AUTH_POSTGRES_PASSWORD}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       auth-postgres:
         condition: service_healthy
@@ -206,6 +318,12 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-postgres:5432/${CATALOG_POSTGRES_DB:?Define CATALOG_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${CATALOG_POSTGRES_USER:?Define CATALOG_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${CATALOG_POSTGRES_PASSWORD:?Define CATALOG_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       catalog-postgres:
         condition: service_healthy
@@ -227,6 +345,12 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://carrito-postgres:5432/${CARRITO_POSTGRES_DB:?Define CARRITO_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${CARRITO_POSTGRES_USER:?Define CARRITO_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${CARRITO_POSTGRES_PASSWORD:?Define CARRITO_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       carrito-postgres:
         condition: service_healthy
@@ -250,6 +374,12 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?Define POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?Define POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -278,6 +408,12 @@ services:
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "false"
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "false"
       SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_REQUIRED: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       notifications-postgres:
         condition: service_healthy
@@ -304,6 +440,12 @@ services:
       SPRING_DATASOURCE_USERNAME: ${RECOMMENDATION_POSTGRES_USER:?Define RECOMMENDATION_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${RECOMMENDATION_POSTGRES_PASSWORD:?Define RECOMMENDATION_POSTGRES_PASSWORD}
       SPRING_AI_MISTRALAI_API_KEY: ${SPRING_AI_MISTRALAI_API_KEY:-tu_api_key_local}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       recommendation-postgres:
         condition: service_healthy
@@ -313,6 +455,69 @@ services:
       - app-network
       - recommendation-database-network
 
+  # ============================================================
+  # MICROSERVICIO: PAGOS (CON ANTIFRAUDE Y KAFKA)
+  # ============================================================
+
+  pagos:
+    build:
+      context: ./pagos
+    container_name: app-pagos
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8087:8080"
+    environment:
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: local
+      SPRING_DATASOURCE_URL: jdbc:postgresql://pago-postgres:5432/${PAGO_POSTGRES_DB:?Define PAGO_POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${PAGO_POSTGRES_USER:?Define PAGO_POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${PAGO_POSTGRES_PASSWORD:?Define PAGO_POSTGRES_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ANTIFRAUDE_MAX_INTENTOS: ${ANTIFRAUDE_MAX_INTENTOS:-3}
+      ANTIFRAUDE_VENTANA_SEGUNDOS: ${ANTIFRAUDE_VENTANA_SEGUNDOS:-10}
+      ANTIFRAUDE_SECRETO_HASH: ${ANTIFRAUDE_SECRETO_HASH:?Define ANTIFRAUDE_SECRETO_HASH}
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      pago-postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - app-network
+      - pago-database-network
+
+  # ============================================================
+  # FRONTEND ANGULAR (SPA NGINX)
+  # ============================================================
+
+  frontend:
+    build:
+      context: ../camisetas360-frontend
+    container_name: app-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4200:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/health | grep -q 'OK' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+    networks:
+      - app-network
+
+# ============================================================
+# VOLÚMENES PERSISTENTES
+# ============================================================
+
 volumes:
   rabbitmq-data:
   postgres-data:
@@ -321,13 +526,19 @@ volumes:
   carrito-postgres-data:
   notifications-postgres-data:
   recommendation-postgres-data:
+  pago-postgres-data:
+  kafka-data:
+
+# ============================================================
+# REDES AISLADAS
+# ============================================================
 
 networks:
+  app-network:
+    driver: bridge
   database-network:
     driver: bridge
   catalog-database-network:
-    driver: bridge
-  app-network:
     driver: bridge
   auth-database-network:
     driver: bridge
@@ -336,4 +547,6 @@ networks:
   notifications-database-network:
     driver: bridge
   recommendation-database-network:
+    driver: bridge
+  pago-database-network:
     driver: bridge

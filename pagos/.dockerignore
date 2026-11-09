@@ -1,0 +1,39 @@
+# ==========================================
+# Docker ignore para microservicio pagos
+# ==========================================
+
+# Directorios de compilación local y artefactos Maven
+target/
+*.jar
+*.war
+*.class
+
+# Entornos y configuración de IDEs
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+
+# Control de versiones
+.git/
+.gitignore
+
+# Archivos de logs y temporales
+*.log
+logs/
+tmp/
+temp/
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Credenciales y variables de entorno locales
+.env
+.env.*
+*.pem
+*.key
