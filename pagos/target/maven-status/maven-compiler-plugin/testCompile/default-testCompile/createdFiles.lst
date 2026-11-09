@@ -1,0 +1,5 @@
+com\camisetas360\pago\util\TarjetaUtilsTest.class
+com\camisetas360\pago\adapter\InMemorySlidingWindowFraudeDetectorTest.class
+com\camisetas360\pago\service\PagoServiceTest.class
+com\camisetas360\pago\controller\PagoControllerTest.class
+com\camisetas360\pago\PagoIntegrationTest.class

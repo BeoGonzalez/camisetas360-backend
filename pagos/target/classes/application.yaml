@@ -1,0 +1,64 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: pagos
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5438/camisetas360_pago}
+    username: ${SPRING_DATASOURCE_USERNAME:pago}
+    password: ${SPRING_DATASOURCE_PASSWORD:pago_dev_password_123}
+    driver-class-name: org.postgresql.Driver
+
+  flyway:
+    enabled: true
+    default-schema: pago
+    schemas:
+      - pago
+    baseline-on-migrate: true
+    clean-disabled: true
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: pago
+    show-sql: false
+    open-in-view: false
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+
+antifraude:
+  max-intentos: ${ANTIFRAUDE_MAX_INTENTOS:3}
+  ventana-segundos: ${ANTIFRAUDE_VENTANA_SEGUNDOS:10}
+  secreto-hash: ${ANTIFRAUDE_SECRETO_HASH:dev-antifraude-secret-key-360-supersecreto}
+
+outbox:
+  scheduler:
+    delay-ms: 2000
+    batch-size: 50
+
+logging:
+  level:
+    com.camisetas360.pago: INFO
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true

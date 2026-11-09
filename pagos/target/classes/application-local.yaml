@@ -1,0 +1,5 @@
+app:
+  cors:
+    enabled: true
+    allowed-origin-patterns:
+      - ${CORS_ALLOWED_ORIGIN:http://localhost:*}
