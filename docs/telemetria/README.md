@@ -53,6 +53,9 @@ Si LabRole no tuviera permiso `dynamodb:UpdateTable`, actívalo ahí mismo a man
 
 ### 2. Tabla de conexiones
 
+**La crea el pipeline**: el job `provision` de `deploy-backend.yml` (`deploy/aws/provision.sh`, paso 5) crea
+`ConexionesWebSocket` con su TTL si no existe. Solo hace falta crearla a mano si todavía no corriste el pipeline:
+
 DynamoDB → Crear tabla:
 
 - Nombre: `ConexionesWebSocket`

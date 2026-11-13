@@ -44,10 +44,22 @@ jobs:
   # El catalogo de servicios se define UNA sola vez aqui y se
   # entrega como matriz a build-images y deploy-services.
   #
+  # kind      = app (microservicio: JAR verificado por ci.yml, tag = SHA
+  #             del commit) | broker (RabbitMQ/Kafka: imagen construida
+  #             desde deploy/ecs/<service>, tag = hash de esa carpeta).
   # port      = containerPort de la task definition y puerto del
   #             listener/target group del NLB interno.
   # db-schema = schema propio en la base Aurora compartida ("" = no usa
   #             Aurora; analytics persiste en DynamoDB).
+  # cpu/memory = tamano de la tarea Fargate que se fuerza en cada deploy
+  #             ("" = se conserva el de la task definition actual).
+  #             recommendation usa 2 vCPU / 8 GB (equivalente a t3.large)
+  #             por TensorFlow.
+  #
+  # El ORDEN importa: con max-parallel 1 los jobs de la matriz corren en
+  # el orden del catalogo. Primero los brokers (los servicios se conectan
+  # al arrancar) y orders al final, cuando notifications y recommendation
+  # ya declararon sus colas de order.created.
   # ============================================================
   preflight:
     name: Preflight AWS
@@ -59,6 +71,7 @@ jobs:
 
     outputs:
       services: ${{ steps.catalog.outputs.services }}
+      catalog: ${{ steps.catalog.outputs.catalog }}
 
     steps:
       - name: Build service catalog
@@ -69,14 +82,16 @@ jobs:
           set -euo pipefail
 
           CATALOG='[
-            {"service":"auth","repository":"camisetas360-auth","task-family":"auth-task","ecs-service":"auth-service","container-name":"auth","port":"8081","db-schema":"auth"},
-            {"service":"catalog","repository":"camisetas360-catalog","task-family":"catalog-task","ecs-service":"catalog-service","container-name":"catalog","port":"8080","db-schema":"catalog"},
-            {"service":"carrito","repository":"camisetas360-carrito","task-family":"carrito-task","ecs-service":"carrito-service","container-name":"carrito","port":"8083","db-schema":"carrito"},
-            {"service":"orders","repository":"camisetas360-orders","task-family":"orders-task","ecs-service":"orders-service","container-name":"orders","port":"8082","db-schema":"orders"},
-            {"service":"notifications","repository":"camisetas360-notifications","task-family":"notifications-task","ecs-service":"notifications-service","container-name":"notifications","port":"8085","db-schema":"notifications"},
-            {"service":"recommendation","repository":"camisetas360-recommendation","task-family":"recommendation-task","ecs-service":"recommendation-service","container-name":"recommendation","port":"8084","db-schema":"recommendation"},
-            {"service":"pagos","repository":"camisetas360-pagos","task-family":"pagos-task","ecs-service":"pagos-service","container-name":"pagos","port":"8087","db-schema":"pago"},
-            {"service":"analytics","repository":"camisetas360-analytics","task-family":"analytics-task","ecs-service":"analytics-service","container-name":"analytics","port":"8086","db-schema":""}
+            {"service":"rabbitmq","kind":"broker","repository":"camisetas360-rabbitmq","task-family":"rabbitmq-task","ecs-service":"rabbitmq-service","container-name":"rabbitmq","port":"5672","db-schema":"","cpu":"512","memory":"1024"},
+            {"service":"kafka","kind":"broker","repository":"camisetas360-kafka","task-family":"kafka-task","ecs-service":"kafka-service","container-name":"kafka","port":"9092","db-schema":"","cpu":"1024","memory":"2048"},
+            {"service":"auth","kind":"app","repository":"camisetas360-auth","task-family":"auth-task","ecs-service":"auth-service","container-name":"auth","port":"8081","db-schema":"auth","cpu":"","memory":""},
+            {"service":"catalog","kind":"app","repository":"camisetas360-catalog","task-family":"catalog-task","ecs-service":"catalog-service","container-name":"catalog","port":"8080","db-schema":"catalog","cpu":"","memory":""},
+            {"service":"notifications","kind":"app","repository":"camisetas360-notifications","task-family":"notifications-task","ecs-service":"notifications-service","container-name":"notifications","port":"8085","db-schema":"notifications","cpu":"","memory":""},
+            {"service":"recommendation","kind":"app","repository":"camisetas360-recommendation","task-family":"recommendation-task","ecs-service":"recommendation-service","container-name":"recommendation","port":"8084","db-schema":"recommendation","cpu":"2048","memory":"8192"},
+            {"service":"analytics","kind":"app","repository":"camisetas360-analytics","task-family":"analytics-task","ecs-service":"analytics-service","container-name":"analytics","port":"8086","db-schema":"","cpu":"","memory":""},
+            {"service":"pagos","kind":"app","repository":"camisetas360-pagos","task-family":"pagos-task","ecs-service":"pagos-service","container-name":"pagos","port":"8087","db-schema":"pago","cpu":"","memory":""},
+            {"service":"carrito","kind":"app","repository":"camisetas360-carrito","task-family":"carrito-task","ecs-service":"carrito-service","container-name":"carrito","port":"8083","db-schema":"carrito","cpu":"","memory":""},
+            {"service":"orders","kind":"app","repository":"camisetas360-orders","task-family":"orders-task","ecs-service":"orders-service","container-name":"orders","port":"8082","db-schema":"orders","cpu":"","memory":""}
           ]'
 
           if [ "${REQUESTED}" = "all" ]; then
@@ -97,17 +112,16 @@ jobs:
           echo "Servicios seleccionados:"
           jq -r '.include[].service' <<< "${SELECTED}"
           echo "services=${SELECTED}" >> "${GITHUB_OUTPUT}"
+          # El aprovisionamiento siempre asegura el catalogo completo.
+          echo "catalog=$(jq -c . <<< "${CATALOG}")" >> "${GITHUB_OUTPUT}"
 
       - name: Validate repository variables and secrets
         env:
-          DB_ENDPOINT: ${{ vars.DB_ENDPOINT }}
-          NLB_DNS: ${{ vars.NLB_DNS }}
+          BACKEND_SUBNET_ID: ${{ vars.BACKEND_SUBNET_ID }}
+          DATABASE_SUBNET_ID: ${{ vars.DATABASE_SUBNET_ID }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
-          ANTIFRAUDE_SECRETO_HASH: ${{ secrets.ANTIFRAUDE_SECRETO_HASH }}
           KAFKA_BOOTSTRAP_SERVERS: ${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
           FRONTEND_ORIGIN: ${{ vars.FRONTEND_ORIGIN }}
-          CATALOG_BASE_URL: ${{ vars.CATALOG_BASE_URL }}
           COGNITO_ENABLED: ${{ vars.COGNITO_ENABLED }}
           COGNITO_ISSUER_URI: ${{ vars.COGNITO_ISSUER_URI }}
           COGNITO_CLIENT_IDS: ${{ vars.COGNITO_CLIENT_IDS }}
@@ -124,19 +138,15 @@ jobs:
             fi
           }
 
-          require DB_ENDPOINT "la variable"
-          require NLB_DNS "la variable"
+          # Subredes donde el pipeline crea el NLB, las tareas (privada 1) y Aurora (privada 2).
+          require BACKEND_SUBNET_ID "la variable"
+          require DATABASE_SUBNET_ID "la variable"
+          # Contrasena maestra con la que el job provision crea Aurora.
           require DB_PASSWORD "el secret"
-          require RABBITMQ_PASSWORD "el secret"
 
-          if jq -e '.include[] | select(.service == "pagos")' <<< "${SERVICES}" >/dev/null; then
-            require ANTIFRAUDE_SECRETO_HASH "el secret"
-          fi
-
-          # carrito valida precios contra catalog (URL interna, p. ej. http://<host-interno>:8080).
-          if jq -e '.include[] | select(.service == "carrito")' <<< "${SERVICES}" >/dev/null; then
-            require CATALOG_BASE_URL "la variable"
-          fi
+          # Las credenciales de las aplicaciones (contrasenas de Aurora y RabbitMQ,
+          # antifraude, SMTP) NO van en el repositorio: se registran a mano en cada
+          # task definition de ECS, y deploy-services verifica que esten.
 
           # auth con Amazon Cognito: sin estas variables el contenedor fallaria al arrancar (fail-fast).
           if jq -e '.include[] | select(.service == "auth")' <<< "${SERVICES}" >/dev/null; then
@@ -153,7 +163,7 @@ jobs:
 
           if jq -e '.include[] | select(.service | IN("pagos", "catalog", "carrito", "analytics", "recommendation"))' <<< "${SERVICES}" >/dev/null \
              && [ -z "${KAFKA_BOOTSTRAP_SERVERS}" ]; then
-            echo "::warning::KAFKA_BOOTSTRAP_SERVERS no esta definida; se usara ${NLB_DNS}:9092 (Kafka en ECS detras del NLB)."
+            echo "::notice::KAFKA_BOOTSTRAP_SERVERS no esta definida; se usara <NLB>:9092 (Kafka en ECS detras del NLB)."
           fi
 
           if jq -e '.include[] | select(.service == "analytics")' <<< "${SERVICES}" >/dev/null \
@@ -185,60 +195,65 @@ jobs:
             exit 1
           fi
 
-      - name: Verify AWS resources exist
-        env:
-          SERVICES: ${{ steps.catalog.outputs.services }}
-        run: |
-          set -euo pipefail
-          MISSING=0
-
-          CLUSTER_STATUS="$(
-            aws ecs describe-clusters \
-              --clusters "${ECS_CLUSTER}" \
-              --query 'clusters[0].status' \
-              --output text
-          )"
-
-          if [ "${CLUSTER_STATUS}" != "ACTIVE" ]; then
-            echo "::error::El cluster ${ECS_CLUSTER} no esta ACTIVE (estado: ${CLUSTER_STATUS})."
-            exit 1
-          fi
-
-          while read -r SERVICE REPOSITORY TASK_FAMILY ECS_SERVICE; do
-            if ! aws ecr describe-repositories --repository-names "${REPOSITORY}" >/dev/null 2>&1; then
-              echo "::error::[${SERVICE}] Falta el repositorio ECR ${REPOSITORY}."
-              MISSING=1
-            fi
-
-            if ! aws ecs describe-task-definition --task-definition "${TASK_FAMILY}" >/dev/null 2>&1; then
-              echo "::error::[${SERVICE}] Falta la task definition ${TASK_FAMILY}."
-              MISSING=1
-            fi
-
-            STATUS="$(
-              aws ecs describe-services \
-                --cluster "${ECS_CLUSTER}" \
-                --services "${ECS_SERVICE}" \
-                --query 'services[0].status' \
-                --output text 2>/dev/null || true
-            )"
-
-            if [ "${STATUS}" != "ACTIVE" ]; then
-              echo "::error::[${SERVICE}] El servicio ECS ${ECS_SERVICE} no existe o no esta ACTIVE (estado: ${STATUS:-none})."
-              MISSING=1
-            fi
-
-            echo "[${SERVICE}] recursos revisados."
-          done < <(jq -r '.include[] | [.service, .repository, .["task-family"], .["ecs-service"]] | @tsv' <<< "${SERVICES}")
-
-          exit "${MISSING}"
-
   # ============================================================
   # 1. Execute the complete backend CI before deployment
   # ============================================================
   tests:
     name: Verify backend before deployment
     uses: ./.github/workflows/ci.yml
+
+  # ============================================================
+  # 1b. Aprovisionamiento (en paralelo con los tests)
+  #
+  # Crea lo que falte, en este orden: ECR -> ECS (cluster, log
+  # groups, task definitions) -> NLB (grupos de seguridad, target
+  # groups, listeners) -> Aurora PostgreSQL -> DynamoDB (tabla
+  # ConexionesWebSocket de la telemetria) -> servicios ECS.
+  # Es idempotente: en los despliegues siguientes solo verifica.
+  # La primera vez tarda ~20 min (Aurora); despues, ~1 min.
+  # ============================================================
+  provision:
+    name: Provision AWS infrastructure
+    needs:
+      - preflight
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+
+    environment:
+      name: production
+
+    outputs:
+      nlb_dns: ${{ steps.provision.outputs.nlb_dns }}
+      db_endpoint: ${{ steps.provision.outputs.db_endpoint }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR, ECS, NLB, Aurora and ECS services
+        id: provision
+        env:
+          CATALOG: ${{ needs.preflight.outputs.catalog }}
+          BACKEND_SUBNET_ID: ${{ vars.BACKEND_SUBNET_ID }}
+          DATABASE_SUBNET_ID: ${{ vars.DATABASE_SUBNET_ID }}
+          DB_NAME: ${{ vars.DB_NAME || 'ecommerce' }}
+          DB_USERNAME: ${{ vars.DB_USERNAME || 'dbadmin' }}
+          DB_INSTANCE_CLASS: ${{ vars.DB_INSTANCE_CLASS || 'db.t4g.medium' }}
+          # Solo para CREAR Aurora (contrasena maestra). Los contenedores la reciben
+          # a mano en su task definition (SPRING_DATASOURCE_PASSWORD).
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: bash deploy/aws/provision.sh
 
   # ============================================================
   # 2. Build immutable Docker images and push them to ECR
@@ -250,11 +265,13 @@ jobs:
     needs:
       - preflight
       - tests
+      - provision
 
     if: >-
       ${{
         needs.preflight.result == 'success' &&
-        needs.tests.result == 'success'
+        needs.tests.result == 'success' &&
+        needs.provision.result == 'success'
       }}
 
     runs-on: ubuntu-24.04
@@ -287,18 +304,21 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Download verified JAR
+        if: ${{ matrix.kind == 'app' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: jar-${{ matrix.service }}
           path: verified-jar
 
       - name: Verify JAR checksum
+        if: ${{ matrix.kind == 'app' }}
         run: |
           set -euo pipefail
           cd verified-jar
           sha256sum -c ./*.sha256
 
       - name: Prepare verified Docker build context
+        if: ${{ matrix.kind == 'app' }}
         env:
           SERVICE: ${{ matrix.service }}
         run: |
@@ -327,16 +347,35 @@ jobs:
           ls -lh "${SERVICE}/target"
 
       # ----------------------------------------------------------
-      # Tag = Git SHA (no :latest): releases inmutables y rollback
-      # determinista. Si la imagen ya existe se reutiliza.
-      # Fargate corre en linux/amd64 por defecto.
+      # Microservicios: tag = Git SHA (no :latest), releases inmutables
+      # y rollback determinista.
+      # Brokers: tag = hash de deploy/ecs/<service>. Mientras esa carpeta
+      # no cambie, el tag (y la task definition) es el mismo y el broker
+      # NO se reinicia en cada push (su disco en Fargate es efimero).
       # ----------------------------------------------------------
-      - name: Build and push immutable image
+      - name: Resolve image tag and build context
+        id: tag
         env:
           SERVICE: ${{ matrix.service }}
+          KIND: ${{ matrix.kind }}
+        run: |
+          set -euo pipefail
+
+          if [ "${KIND}" = "broker" ]; then
+            echo "tag=cfg-$(git rev-parse --short=12 "HEAD:deploy/ecs/${SERVICE}")" >> "${GITHUB_OUTPUT}"
+            echo "context=./deploy/ecs/${SERVICE}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "tag=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+            echo "context=./${SERVICE}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      # Si la imagen ya existe se reutiliza. Fargate corre en linux/amd64.
+      - name: Build and push immutable image
+        env:
           REPOSITORY: ${{ matrix.repository }}
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+          BUILD_CONTEXT: ${{ steps.tag.outputs.context }}
         run: |
           set -euo pipefail
 
@@ -357,7 +396,7 @@ jobs:
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.version=${IMAGE_TAG}" \
             --tag "${IMAGE}" \
-            "./${SERVICE}"
+            "${BUILD_CONTEXT}"
 
           docker push "${IMAGE}"
 
@@ -380,11 +419,13 @@ jobs:
     name: Deploy ${{ matrix.service }} to ECS
     needs:
       - preflight
+      - provision
       - build-images
 
     if: >-
       ${{
         needs.preflight.result == 'success' &&
+        needs.provision.result == 'success' &&
         needs.build-images.result == 'success'
       }}
 
@@ -400,6 +441,13 @@ jobs:
       name: production
 
     steps:
+      # Solo los brokers lo necesitan: su tag es el hash de deploy/ecs/<service>.
+      - name: Checkout source code
+        if: ${{ matrix.kind == 'broker' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -411,10 +459,17 @@ jobs:
       - name: Resolve image URI
         id: image
         env:
+          SERVICE: ${{ matrix.service }}
+          KIND: ${{ matrix.kind }}
           REPOSITORY: ${{ matrix.repository }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
+
+          if [ "${KIND}" = "broker" ]; then
+            IMAGE_TAG="cfg-$(git rev-parse --short=12 "HEAD:deploy/ecs/${SERVICE}")"
+          else
+            IMAGE_TAG="${GITHUB_SHA}"
+          fi
 
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPOSITORY}:${IMAGE_TAG}"
@@ -468,9 +523,13 @@ jobs:
           jq '{family, cpu, memory, networkMode, executionRoleArn, taskRoleArn}' current-task-definition.json
 
       # ----------------------------------------------------------
-      # Configuracion de runtime. Cada servicio recibe solo lo que
-      # necesita (no se reparte el secreto antifraude ni las
-      # credenciales de RabbitMQ a todos los contenedores).
+      # Configuracion de runtime NO secreta. Cada servicio recibe solo
+      # lo que necesita.
+      #
+      # Las CREDENCIALES no las inyecta el pipeline: se registran a mano
+      # en cada task definition (consola de ECS) y el render las
+      # conserva, porque solo reemplaza las variables que el mismo
+      # inyecta. El paso siguiente verifica que esten.
       #
       # Aurora: una base compartida (DB_NAME) con un schema por
       # servicio (currentSchema + SPRING_FLYWAY_SCHEMAS), para que
@@ -479,22 +538,22 @@ jobs:
       - name: Render new task definition
         env:
           SERVICE: ${{ matrix.service }}
+          KIND: ${{ matrix.kind }}
+          TASK_CPU: ${{ matrix.cpu }}
+          TASK_MEMORY: ${{ matrix.memory }}
           CONTAINER_NAME: ${{ matrix.container-name }}
           SERVER_PORT: ${{ matrix.port }}
           DB_SCHEMA: ${{ matrix.db-schema }}
           IMAGE_URI: ${{ steps.image.outputs.uri }}
-          DB_ENDPOINT: ${{ vars.DB_ENDPOINT }}
+          # Los crea el job provision; una variable de GitHub con valor los reemplaza.
+          DB_ENDPOINT: ${{ vars.DB_ENDPOINT || needs.provision.outputs.db_endpoint }}
           DB_NAME: ${{ vars.DB_NAME || 'ecommerce' }}
           DB_USERNAME: ${{ vars.DB_USERNAME || 'dbadmin' }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          NLB_DNS: ${{ vars.NLB_DNS }}
+          NLB_DNS: ${{ vars.NLB_DNS || needs.provision.outputs.nlb_dns }}
           RABBITMQ_USERNAME: ${{ vars.RABBITMQ_USERNAME || 'admin' }}
-          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
           RABBITMQ_VHOST: ${{ vars.RABBITMQ_VHOST || '/' }}
           KAFKA_BOOTSTRAP_SERVERS: ${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
-          ANTIFRAUDE_SECRETO_HASH: ${{ secrets.ANTIFRAUDE_SECRETO_HASH }}
           MAIL_USERNAME: ${{ vars.MAIL_USERNAME || 'dummy' }}
-          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD || 'dummy' }}
           MAIL_FROM: ${{ vars.MAIL_FROM || 'dummy' }}
           ENTRA_ISSUER_URI: ${{ vars.ENTRA_ISSUER_URI }}
           ENTRA_AUDIENCE: ${{ vars.ENTRA_AUDIENCE }}
@@ -513,24 +572,25 @@ jobs:
           set -euo pipefail
 
           KAFKA="${KAFKA_BOOTSTRAP_SERVERS:-${NLB_DNS}:9092}"
+          # carrito valida precios contra catalog por el NLB (listener 8080).
+          CATALOG_BASE_URL="${CATALOG_BASE_URL:-http://${NLB_DNS}:8080}"
 
           jq \
             --arg service "${SERVICE}" \
+            --arg kind "${KIND}" \
+            --arg taskCpu "${TASK_CPU}" \
+            --arg taskMemory "${TASK_MEMORY}" \
             --arg container "${CONTAINER_NAME}" \
             --arg image "${IMAGE_URI}" \
             --arg port "${SERVER_PORT}" \
             --arg dbUrl "jdbc:postgresql://${DB_ENDPOINT}:5432/${DB_NAME}?currentSchema=${DB_SCHEMA}&sslmode=require" \
             --arg schema "${DB_SCHEMA}" \
             --arg dbUser "${DB_USERNAME}" \
-            --arg dbPass "${DB_PASSWORD}" \
             --arg rabbitHost "${NLB_DNS}" \
             --arg rabbitUser "${RABBITMQ_USERNAME}" \
-            --arg rabbitPass "${RABBITMQ_PASSWORD}" \
             --arg rabbitVhost "${RABBITMQ_VHOST}" \
             --arg kafka "${KAFKA}" \
-            --arg antifraude "${ANTIFRAUDE_SECRETO_HASH}" \
             --arg mailUser "${MAIL_USERNAME}" \
-            --arg mailPass "${MAIL_PASSWORD}" \
             --arg mailFrom "${MAIL_FROM}" \
             --arg entraIssuer "${ENTRA_ISSUER_URI}" \
             --arg entraAudience "${ENTRA_AUDIENCE}" \
@@ -551,6 +611,17 @@ jobs:
             def kv($n; $v): {name: $n, value: $v};
 
             (
+              # Brokers: solo su propia configuracion. El usuario y el vhost de RabbitMQ son
+              # los que usan los microservicios (su contrasena, RABBITMQ_DEFAULT_PASS, va a mano);
+              # Kafka anuncia la misma direccion (el NLB) que reciben los clientes.
+              if $kind == "broker" then
+                (if $service == "rabbitmq" then [
+                    kv("RABBITMQ_DEFAULT_USER"; $rabbitUser),
+                    kv("RABBITMQ_DEFAULT_VHOST"; $rabbitVhost)
+                  ] else [
+                    kv("KAFKA_ADVERTISED_LISTENERS"; "PLAINTEXT://" + $kafka)
+                  ] end)
+              else
               [
                 kv("SERVER_PORT"; $port),
                 # JVM ajustada al limite de memoria de la tarea Fargate.
@@ -559,8 +630,7 @@ jobs:
               + (if $schema != "" then [
                   kv("SPRING_DATASOURCE_URL"; $dbUrl),
                   kv("SPRING_FLYWAY_SCHEMAS"; $schema),
-                  kv("SPRING_DATASOURCE_USERNAME"; $dbUser),
-                  kv("SPRING_DATASOURCE_PASSWORD"; $dbPass)
+                  kv("SPRING_DATASOURCE_USERNAME"; $dbUser)
                 ] else [] end)
               + (if ($service | IN("pagos", "catalog", "carrito", "analytics", "recommendation")) then [
                   kv("KAFKA_BOOTSTRAP_SERVERS"; $kafka)
@@ -571,16 +641,11 @@ jobs:
                   kv("SPRING_RABBITMQ_HOST"; $rabbitHost),
                   kv("SPRING_RABBITMQ_PORT"; "5672"),
                   kv("SPRING_RABBITMQ_USERNAME"; $rabbitUser),
-                  kv("SPRING_RABBITMQ_PASSWORD"; $rabbitPass),
                   kv("SPRING_RABBITMQ_VIRTUAL_HOST"; $rabbitVhost)
                 ] else [] end)
               + (if $service == "notifications" then [
                   kv("MAIL_USERNAME"; $mailUser),
-                  kv("MAIL_PASSWORD"; $mailPass),
                   kv("MAIL_FROM"; $mailFrom)
-                ] else [] end)
-              + (if $service == "pagos" then [
-                  kv("ANTIFRAUDE_SECRETO_HASH"; $antifraude)
                 ] else [] end)
               + (if $service == "carrito" then [
                   kv("CATALOG_BASE_URL"; $catalogUrl)
@@ -600,17 +665,23 @@ jobs:
                       ["COGNITO_USER_INFO_TIMEOUT", $cognitoUserInfoTimeout]
                     ] | map(select(.[1] != "") | kv(.[0]; .[1])))
                 else [] end)
+              # DynamoDB es OBLIGATORIO en AWS para recommendation (UserInteractions) y para
+              # analytics (fuente de la telemetria). Se fija aqui en cada deploy para que una
+              # variable vieja en la task definition no pueda apagarlo; las credenciales son
+              # las del task role (LabRole) y las tablas se crean al arrancar (on-demand).
               + (if $service == "recommendation" then [
-                  # Copia de interacciones en la tabla UserInteractions de DynamoDB con las
-                  # credenciales del task role (LabRole); la crea al arrancar si no existe.
-                  kv("AWS_REGION"; $region)
+                  kv("AWS_REGION"; $region),
+                  kv("DYNAMODB_ENABLED"; "true"),
+                  kv("DYNAMODB_CREATE_TABLES"; "true"),
+                  kv("DYNAMODB_TABLA_INTERACCIONES"; "UserInteractions")
                 ] else [] end)
               + (if $service == "analytics" then [
-                  # DynamoDB con las credenciales del task role (LabRole). Las tablas son
-                  # on-demand y el servicio las crea al arrancar si no existen.
                   kv("AWS_REGION"; $region),
+                  kv("DYNAMODB_CREATE_TABLES"; "true"),
+                  kv("DYNAMODB_PRODUCTOS_STREAM"; "true"),
                   kv("WEBSOCKET_ALLOWED_ORIGINS"; $frontendOrigin)
                 ] else [] end)
+              end
             ) as $injected
             | ($injected | map(.name)) as $names
             | del(
@@ -623,9 +694,16 @@ jobs:
                 .registeredBy,
                 .deregisteredAt
               )
+            # Tamano de tarea fijado en el catalogo (p. ej. recommendation 2 vCPU / 8 GB).
+            # Se quitan los limites a nivel de contenedor para que la JVM vea toda la tarea.
+            | (if $taskCpu != "" then .cpu = $taskCpu else . end)
+            | (if $taskMemory != "" then .memory = $taskMemory else . end)
             | (.containerDefinitions[] | select(.name == $container)) |= (
-                .image = $image
+                (if $taskMemory != "" then del(.cpu, .memory, .memoryReservation) else . end)
+                | .image = $image
                 | .essential = true
+                # Solo se reemplazan las variables inyectadas; las demas (las credenciales
+                # registradas a mano y cualquier "secrets" con valueFrom) se conservan.
                 | .environment = (
                     ((.environment // []) | map(select(.name as $n | $names | index($n) | not)))
                     + $injected
@@ -649,8 +727,93 @@ jobs:
             '.containerDefinitions[] | select(.name == $c) | {image, environment: [.environment[].name]}' \
             new-task-definition.json
 
+      # ----------------------------------------------------------
+      # Las credenciales se registran a mano en la task definition.
+      # Si falta alguna, se corta aqui (antes de registrar nada) con
+      # la lista exacta, en vez de dejar tareas que no arrancan.
+      # Acepta la variable en "environment" o como "secrets" (valueFrom).
+      # ----------------------------------------------------------
+      - name: Verify credentials registered in the task definition
+        env:
+          SERVICE: ${{ matrix.service }}
+          CONTAINER_NAME: ${{ matrix.container-name }}
+          TASK_FAMILY: ${{ matrix.task-family }}
+          DB_SCHEMA: ${{ matrix.db-schema }}
+        run: |
+          set -euo pipefail
+
+          REQUIRED=()
+          [ -n "${DB_SCHEMA}" ] && REQUIRED+=(SPRING_DATASOURCE_PASSWORD)
+          case "${SERVICE}" in
+            carrito|orders|recommendation) REQUIRED+=(SPRING_RABBITMQ_PASSWORD) ;;
+            notifications) REQUIRED+=(SPRING_RABBITMQ_PASSWORD MAIL_PASSWORD) ;;
+            pagos) REQUIRED+=(ANTIFRAUDE_SECRETO_HASH) ;;
+            rabbitmq) REQUIRED+=(RABBITMQ_DEFAULT_PASS) ;;
+          esac
+
+          if [ "${#REQUIRED[@]}" -eq 0 ]; then
+            echo "${SERVICE} no necesita credenciales."
+            exit 0
+          fi
+
+          MISSING=()
+          for name in "${REQUIRED[@]}"; do
+            if ! jq -e --arg c "${CONTAINER_NAME}" --arg n "${name}" '
+                .containerDefinitions[] | select(.name == $c)
+                | ([(.environment // [])[] | select(.name == $n and (.value // "") != "")]
+                   + [(.secrets // [])[] | select(.name == $n)]) | length > 0
+              ' new-task-definition.json >/dev/null; then
+              MISSING+=("${name}")
+            fi
+          done
+
+          if [ "${#MISSING[@]}" -gt 0 ]; then
+            echo "::error::Faltan credenciales en ${TASK_FAMILY} (contenedor ${CONTAINER_NAME}): ${MISSING[*]}. Registralas en ECS -> Definiciones de tareas -> ${TASK_FAMILY} -> Crear nueva revision -> contenedor ${CONTAINER_NAME} -> Variables de entorno, y vuelve a ejecutar el workflow."
+            exit 1
+          fi
+          echo "Credenciales presentes en ${TASK_FAMILY}: ${REQUIRED[*]}"
+
+      # ----------------------------------------------------------
+      # Un broker solo se redespliega si cambio su imagen, su
+      # configuracion o su tamano, o si el servicio sigue en 0 tareas.
+      # Reiniciarlo en cada push borraria colas y topics (Fargate no
+      # guarda disco) sin ninguna necesidad.
+      # ----------------------------------------------------------
+      - name: Decide whether to deploy
+        id: changes
+        env:
+          KIND: ${{ matrix.kind }}
+          ECS_SERVICE: ${{ matrix.ecs-service }}
+        run: |
+          set -euo pipefail
+
+          if [ "${KIND}" != "broker" ]; then
+            echo "deploy=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          normalize='{cpu, memory, containerDefinitions: [.containerDefinitions[] | .environment = ((.environment // []) | sort_by(.name))]}'
+          CURRENT="$(jq -S -c "${normalize}" current-task-definition.json)"
+          NEW="$(jq -S -c "${normalize}" new-task-definition.json)"
+
+          DESIRED="$(
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --query 'services[0].desiredCount' \
+              --output text
+          )"
+
+          if [ "${CURRENT}" = "${NEW}" ] && [ "${DESIRED}" != "0" ]; then
+            echo "${ECS_SERVICE} sin cambios (imagen, variables y tamano iguales); no se reinicia."
+            echo "deploy=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "deploy=true" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Register new task definition revision
         id: register
+        if: ${{ steps.changes.outputs.deploy == 'true' }}
         run: |
           set -euo pipefail
 
@@ -676,7 +839,9 @@ jobs:
       # (lo que consume presupuesto del lab).
       # ----------------------------------------------------------
       - name: Deploy task definition to ECS service
+        if: ${{ steps.changes.outputs.deploy == 'true' }}
         env:
+          KIND: ${{ matrix.kind }}
           ECS_SERVICE: ${{ matrix.ecs-service }}
           TASK_DEFINITION_ARN: ${{ steps.register.outputs.arn }}
           DESIRED_COUNT: ${{ inputs.desired_count || '1' }}
@@ -688,12 +853,21 @@ jobs:
             exit 1
           fi
 
+          if [ "${KIND}" = "broker" ]; then
+            # Un solo broker, y nunca dos a la vez: se detiene el viejo antes de
+            # arrancar el nuevo (dos nodos Kafka con el mismo id romperian el cluster).
+            DESIRED_COUNT=1
+            DEPLOYMENT="deploymentCircuitBreaker={enable=true,rollback=true},maximumPercent=100,minimumHealthyPercent=0"
+          else
+            DEPLOYMENT="deploymentCircuitBreaker={enable=true,rollback=true},maximumPercent=200,minimumHealthyPercent=100"
+          fi
+
           ARGS=(
             --cluster "${ECS_CLUSTER}"
             --service "${ECS_SERVICE}"
             --task-definition "${TASK_DEFINITION_ARN}"
             --desired-count "${DESIRED_COUNT}"
-            --deployment-configuration "deploymentCircuitBreaker={enable=true,rollback=true},maximumPercent=200,minimumHealthyPercent=100"
+            --deployment-configuration "${DEPLOYMENT}"
             --force-new-deployment
           )
 
@@ -720,6 +894,7 @@ jobs:
       # circuit breaker lo marca FAILED o hizo rollback.
       # ----------------------------------------------------------
       - name: Wait for rollout
+        if: ${{ steps.changes.outputs.deploy == 'true' }}
         env:
           ECS_SERVICE: ${{ matrix.ecs-service }}
           TASK_DEFINITION_ARN: ${{ steps.register.outputs.arn }}
@@ -760,6 +935,51 @@ jobs:
 
           echo "::error::${ECS_SERVICE} no termino el rollout en 25 minutos."
           exit 1
+
+      # ----------------------------------------------------------
+      # recommendation y analytics no se dan por desplegados si sus
+      # tablas de DynamoDB no existen (y, en analytics, si la tabla de
+      # productos no tiene el stream que alimenta la telemetria).
+      # Las crea el propio servicio al arrancar con LabRole; si un
+      # permiso o la region fallan, el deploy falla aqui y no en silencio.
+      # ----------------------------------------------------------
+      - name: Verify DynamoDB tables
+        if: ${{ matrix.service == 'recommendation' || matrix.service == 'analytics' }}
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
+          if [ "${SERVICE}" = "recommendation" ]; then
+            TABLES=(UserInteractions)
+          else
+            TABLES=(camisetas360-analytics-eventos camisetas360-analytics-productos camisetas360-analytics-recomendaciones)
+          fi
+
+          for table in "${TABLES[@]}"; do
+            STATUS=""
+            for _ in $(seq 1 20); do
+              STATUS="$(aws dynamodb describe-table --table-name "${table}" \
+                --query 'Table.TableStatus' --output text 2>/dev/null || true)"
+              [ "${STATUS}" = "ACTIVE" ] && break
+              sleep 15
+            done
+            if [ "${STATUS}" != "ACTIVE" ]; then
+              echo "::error::La tabla DynamoDB ${table} no existe o no esta ACTIVE (estado: ${STATUS:-no existe}). Revisa /ecs/${SERVICE} en CloudWatch."
+              exit 1
+            fi
+            echo "DynamoDB ${table}: ACTIVE"
+          done
+
+          if [ "${SERVICE}" = "analytics" ]; then
+            read -r ENABLED VIEW < <(aws dynamodb describe-table --table-name camisetas360-analytics-productos \
+              --query 'Table.StreamSpecification.[StreamEnabled,StreamViewType]' --output text)
+            if [ "${ENABLED}" != "True" ] || { [ "${VIEW}" != "NEW_IMAGE" ] && [ "${VIEW}" != "NEW_AND_OLD_IMAGES" ]; }; then
+              echo "::error::camisetas360-analytics-productos no tiene DynamoDB Streams con imagen nueva (${ENABLED}/${VIEW}): la telemetria WebSocket no recibiria datos."
+              exit 1
+            fi
+            echo "DynamoDB Streams en camisetas360-analytics-productos: ${VIEW}"
+          fi
 
       - name: Show diagnostics
         if: ${{ failure() }}
@@ -806,6 +1026,7 @@ jobs:
     needs:
       - preflight
       - tests
+      - provision
       - build-images
       - deploy-services
 
@@ -819,6 +1040,7 @@ jobs:
         env:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
+          PROVISION_RESULT: ${{ needs.provision.result }}
           BUILD_RESULT: ${{ needs.build-images.result }}
           DEPLOY_RESULT: ${{ needs.deploy-services.result }}
         run: |
@@ -826,17 +1048,21 @@ jobs:
 
           echo "Preflight: ${PREFLIGHT_RESULT}"
           echo "Tests:     ${TESTS_RESULT}"
+          echo "Provision: ${PROVISION_RESULT}"
           echo "Build:     ${BUILD_RESULT}"
           echo "Deploy:    ${DEPLOY_RESULT}"
 
           test "${PREFLIGHT_RESULT}" = "success"
           test "${TESTS_RESULT}" = "success"
+          test "${PROVISION_RESULT}" = "success"
           test "${BUILD_RESULT}" = "success"
           test "${DEPLOY_RESULT}" = "success"
 
       - name: Write deployment summary
         env:
           SERVICES: ${{ needs.preflight.outputs.services }}
+          NLB_DNS: ${{ needs.provision.outputs.nlb_dns }}
+          DB_ENDPOINT: ${{ needs.provision.outputs.db_endpoint }}
         run: |
           {
             echo "## Camisetas360 Backend Deployment"
@@ -844,9 +1070,11 @@ jobs:
             echo "- Environment: production"
             echo "- AWS region: ${AWS_REGION}"
             echo "- ECS cluster: ${ECS_CLUSTER} (Fargate)"
+            echo "- NLB interno: \`${NLB_DNS}\` (usalo en las integraciones del API Gateway)"
+            echo "- Aurora: \`${DB_ENDPOINT}\`"
             echo "- Git commit: \`${GITHUB_SHA}\`"
             echo
-            echo "| Servicio | Puerto NLB | Schema Aurora |"
-            echo "|---|---|---|"
-            jq -r '.include[] | "| \(.service) | \(.port) | \(if .["db-schema"] == "" then "DynamoDB" else .["db-schema"] end) |"' <<< "${SERVICES}"
+            echo "| Servicio | Tipo | Puerto NLB | Schema Aurora | Tarea |"
+            echo "|---|---|---|---|---|"
+            jq -r '.include[] | "| \(.service) | \(.kind) | \(.port) | \(if .kind == "broker" then "-" elif .["db-schema"] == "" then "DynamoDB" else .["db-schema"] end) | \(if .cpu == "" then "segun task definition" else "\(.cpu) CPU / \(.memory) MB" end) |"' <<< "${SERVICES}"
           } >> "${GITHUB_STEP_SUMMARY}"
