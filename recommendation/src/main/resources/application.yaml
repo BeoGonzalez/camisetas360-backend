@@ -15,13 +15,13 @@ spring:
     enabled: true
     clean-disabled: true
 
-  ai:
-    mistralai:
-      api-key: ${SPRING_AI_MISTRALAI_API_KEY:}
-      chat:
-        options:
-          model: ${SPRING_AI_MISTRALAI_CHAT_MODEL:mistral-small-latest}
-          temperature: 0.7
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${ENTRA_ISSUER_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
+          audiences:
+            - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
 
   jpa:
     hibernate:
@@ -49,6 +49,39 @@ spring:
           initial-interval: 1s
           multiplier: 2
           max-interval: 5s
+
+app:
+  cors:
+    enabled: false
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    listeners-enabled: ${KAFKA_LISTENERS_ENABLED:true}
+
+  # Copia de cada interaccion en DynamoDB (tabla UserInteractions de la guia Kafka + TensorFlow).
+  dynamodb:
+    enabled: ${DYNAMODB_ENABLED:true}
+    # En ECS se usa la region y las credenciales del task role (LabRole).
+    region: ${AWS_REGION:us-east-1}
+    # Solo en local: endpoint de DynamoDB Local (p. ej. http://dynamodb-local:8000).
+    endpoint: ${DYNAMODB_ENDPOINT:}
+    tabla-interacciones: ${DYNAMODB_TABLA_INTERACCIONES:UserInteractions}
+    create-tables: ${DYNAMODB_CREATE_TABLES:true}
+    poll-ms: ${DYNAMODB_POLL_MS:2000}
+
+  # Modelo de TensorFlow (guia Kafka + TensorFlow) dentro del servicio. Se reentrena con todas las
+  # interacciones; mientras no haya modelo o si no conoce al usuario, rige el Top 5 ponderado.
+  tensorflow:
+    enabled: ${TENSORFLOW_ENABLED:true}
+    retraso-inicial-ms: ${TENSORFLOW_RETRASO_INICIAL_MS:15000}
+    reentrenar-cada-ms: ${TENSORFLOW_REENTRENAR_CADA_MS:300000}
+    epocas: ${TENSORFLOW_EPOCAS:40}
+    dimension: ${TENSORFLOW_DIMENSION:16}
+
+
+logging:
+  level:
+    org.apache.kafka: WARN
 
 management:
   endpoints:

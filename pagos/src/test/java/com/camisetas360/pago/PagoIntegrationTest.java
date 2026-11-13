@@ -19,7 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -28,14 +28,47 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.web.servlet.MockMvc;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
+@AutoConfigureMockMvc
 @Testcontainers
 class PagoIntegrationTest {
 
+    @Autowired
+    private MockMvc mvc;
+
+    @Test
+    @DisplayName("Swagger /v3/api-docs es publico y documenta los endpoints de pago")
+    void openApiPublico() throws Exception {
+        mvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.openapi").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/pago/iniciar']").exists());
+        mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("Health es publico, no expone detalles internos y no depende de la BD")
+    void healthSinDetalles() throws Exception {
+        mvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"))
+                .andExpect(jsonPath("$.components").doesNotExist())
+                .andExpect(jsonPath("$.details").doesNotExist());
+        mvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk());
+        mvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
+    }
+
     @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17")
+    @SuppressWarnings("resource") // @Container (Testcontainers) inicia y cierra el contenedor
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17")
             .withDatabaseName("camisetas360_pago")
             .withUsername("pago")
             .withPassword("pago_test_pass");

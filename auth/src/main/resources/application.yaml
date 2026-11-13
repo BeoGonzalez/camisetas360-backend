@@ -36,6 +36,24 @@ spring:
 app:
   cors:
     enabled: false
+  security:
+    # Amazon Cognito (clientes externos). Apagado por defecto: con enabled=false solo se confia en Entra ID.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      # https://cognito-idp.<region>.amazonaws.com/<userPoolId> (sin '/' final; comparacion exacta con 'iss')
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      # Opcional: por defecto <issuer-uri>/.well-known/jwks.json
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      # App clients autorizados (claim client_id), separados por coma
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      # Identificador del resource server: el scope <id>/Profile.Read se traduce a SCOPE_Profile.Read
+      resource-server-id: ${COGNITO_RESOURCE_SERVER_ID:}
+      # Allowlist de cognito:groups (case-sensitive); ADMIN solo si se incluye explicitamente
+      allowed-groups: ${COGNITO_ALLOWED_GROUPS:CUSTOMER}
+      default-role: ${COGNITO_DEFAULT_ROLE:CUSTOMER}
+      # Opcional: https://<dominio>.auth.<region>.amazoncognito.com/oauth2/userInfo (fallback de email/name)
+      user-info-uri: ${COGNITO_USER_INFO_URI:}
+      user-info-timeout: ${COGNITO_USER_INFO_TIMEOUT:2s}
 
 management:
   endpoints:

@@ -3,6 +3,7 @@ package com.camisetas360.orders.messaging;
 import com.camisetas360.orders.messaging.event.OrderCreatedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -19,18 +20,22 @@ public class OrderOutboxRelay {
     private final OrderEventPublisher publisher;
     private final TransactionTemplate transaction;
     private final JsonMapper json = JsonMapper.builder().build();
+    private final int maxPerPoll;
 
-    public OrderOutboxRelay(JdbcTemplate jdbc, OrderEventPublisher publisher, PlatformTransactionManager manager) {
+    public OrderOutboxRelay(JdbcTemplate jdbc, OrderEventPublisher publisher, PlatformTransactionManager manager,
+                            @Value("${app.outbox.max-per-poll:500}") int maxPerPoll) {
         this.jdbc = jdbc;
         this.publisher = publisher;
         this.transaction = new TransactionTemplate(manager);
+        this.maxPerPoll = maxPerPoll;
     }
 
-    @Scheduled(fixedDelayString = "${app.outbox.poll-ms:5000}")
+    @Scheduled(fixedDelayString = "${app.outbox.poll-ms:1000}")
     public void relay() {
         try {
-            // Bounded work per poll, also safe with multiple orders ECS tasks.
-            for (int i = 0; i < 20; i++) {
+            // Vacia el backlog en cada ciclo (antes: 20 eventos cada 5 s = techo fijo de 4 eventos/s).
+            // El tope evita monopolizar el scheduler; SKIP LOCKED lo hace seguro con varias tareas ECS.
+            for (int i = 0; i < maxPerPoll; i++) {
                 if (!Boolean.TRUE.equals(transaction.execute(status -> sendNext()))) {
                     break;
                 }

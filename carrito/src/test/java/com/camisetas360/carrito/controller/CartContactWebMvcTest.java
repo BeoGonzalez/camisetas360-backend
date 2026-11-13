@@ -4,7 +4,14 @@ import com.camisetas360.carrito.messaging.CheckoutEventPublisher;
 import com.camisetas360.carrito.repository.CheckoutRequestRepository;
 import com.camisetas360.carrito.security.SecurityConfig;
 import com.camisetas360.carrito.service.CartService;
+import com.camisetas360.carrito.service.CatalogoProductos;
+import com.camisetas360.carrito.service.ProductoCatalogo;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -19,12 +26,22 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(CartController.class)
-@Import({SecurityConfig.class, CartService.class})
+@Import({SecurityConfig.class, CartService.class, CartContactWebMvcTest.SinTransaccion.class})
 class CartContactWebMvcTest {
     @Autowired MockMvc mvc;
     @MockitoBean JwtDecoder decoder;
     @MockitoBean CheckoutEventPublisher publisher;
     @MockitoBean CheckoutRequestRepository checkouts;
+    @MockitoBean CatalogoProductos catalogo;
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class SinTransaccion {
+        @Bean TransactionOperations transactionOperations() { return TransactionOperations.withoutTransaction(); }
+    }
+
+    @BeforeEach void catalogoConocido() {
+        when(catalogo.buscar(any())).thenReturn(Map.of("A", new ProductoCatalogo("A", "Camiseta", null, 20.0)));
+    }
 
     private org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor token(String email) {
         return jwt().jwt(builder -> builder.claim("tid", "11111111-1111-1111-1111-111111111111")

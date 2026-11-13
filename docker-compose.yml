@@ -251,8 +251,26 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic pago.autorizado --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic pago.rechazado --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic pago.fraude-detectado --partitions 3 --replication-factor 1
+        echo "Creando topicos de analitica (catalog y carrito)..."
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic catalogo.producto-visto --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic carrito.item-agregado --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic carrito.item-eliminado --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic carrito.envio-actualizado --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic recommendation.interacciones.dlt --partitions 3 --replication-factor 1
         echo "Tópicos disponibles en Kafka:"
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
+
+  # DynamoDB Local para analytics y recommendation (en AWS se usa DynamoDB real con LabRole).
+  # -inMemory: los datos se pierden al reiniciar el contenedor.
+  dynamodb-local:
+    image: amazon/dynamodb-local:2.5.2
+    container_name: camisetas360-dynamodb-local
+    restart: unless-stopped
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+    ports:
+      - "127.0.0.1:8001:8000"
+    networks:
+      - app-network
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -290,6 +308,16 @@ services:
       SPRING_DATASOURCE_USERNAME: ${AUTH_POSTGRES_USER:?Define AUTH_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${AUTH_POSTGRES_PASSWORD:?Define AUTH_POSTGRES_PASSWORD}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
+      # Amazon Cognito (segundo issuer, opcional). Ver docs/security/COGNITO.md
+      COGNITO_ENABLED: ${COGNITO_ENABLED:-false}
+      COGNITO_ISSUER_URI: ${COGNITO_ISSUER_URI:-}
+      COGNITO_JWK_SET_URI: ${COGNITO_JWK_SET_URI:-}
+      COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}
+      COGNITO_RESOURCE_SERVER_ID: ${COGNITO_RESOURCE_SERVER_ID:-}
+      COGNITO_ALLOWED_GROUPS: ${COGNITO_ALLOWED_GROUPS:-CUSTOMER}
+      COGNITO_DEFAULT_ROLE: ${COGNITO_DEFAULT_ROLE:-CUSTOMER}
+      COGNITO_USER_INFO_URI: ${COGNITO_USER_INFO_URI:-}
+      COGNITO_USER_INFO_TIMEOUT: ${COGNITO_USER_INFO_TIMEOUT:-2s}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
@@ -318,6 +346,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-postgres:5432/${CATALOG_POSTGRES_DB:?Define CATALOG_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${CATALOG_POSTGRES_USER:?Define CATALOG_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${CATALOG_POSTGRES_PASSWORD:?Define CATALOG_POSTGRES_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
@@ -327,6 +356,8 @@ services:
     depends_on:
       catalog-postgres:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     networks:
       - app-network
       - catalog-database-network
@@ -345,6 +376,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://carrito-postgres:5432/${CARRITO_POSTGRES_DB:?Define CARRITO_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${CARRITO_POSTGRES_USER:?Define CARRITO_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${CARRITO_POSTGRES_PASSWORD:?Define CARRITO_POSTGRES_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Precios y existencia de productos se validan contra catalog (nunca se usa el precio del cliente).
+      CATALOG_BASE_URL: http://catalog:8080
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
@@ -356,6 +390,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     networks:
       - app-network
       - carrito-database-network
@@ -439,7 +475,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://recommendation-postgres:5432/${RECOMMENDATION_POSTGRES_DB:?Define RECOMMENDATION_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${RECOMMENDATION_POSTGRES_USER:?Define RECOMMENDATION_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${RECOMMENDATION_POSTGRES_PASSWORD:?Define RECOMMENDATION_POSTGRES_PASSWORD}
-      SPRING_AI_MISTRALAI_API_KEY: ${SPRING_AI_MISTRALAI_API_KEY:-tu_api_key_local}
+      # Interacciones (vista / carrito) que publican catalog y carrito.
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Copia de cada interaccion en la tabla UserInteractions (guia Kafka + TensorFlow).
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      AWS_REGION: us-east-1
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
@@ -451,6 +491,10 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      dynamodb-local:
+        condition: service_started
     networks:
       - app-network
       - recommendation-database-network
@@ -495,22 +539,36 @@ services:
       - pago-database-network
 
   # ============================================================
-  # FRONTEND ANGULAR (SPA NGINX)
+  # MICROSERVICIO: ANALYTICS Y RECOMENDACIONES (KAFKA + DYNAMODB + WEBSOCKET)
   # ============================================================
 
-  frontend:
+  analytics:
     build:
-      context: ../camisetas360-frontend
-    container_name: app-frontend
+      context: ./analytics
+    container_name: app-analytics
     restart: unless-stopped
     ports:
-      - "127.0.0.1:4200:80"
+      - "127.0.0.1:8089:8080"
+    environment:
+      <<: *resource-server-environment
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: local
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      AWS_REGION: us-east-1
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
+      WEBSOCKET_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/health | grep -q 'OK' || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 4
-      start_period: 15s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      dynamodb-local:
+        condition: service_started
     networks:
       - app-network
 

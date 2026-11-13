@@ -125,8 +125,57 @@ class CatalogControllerWebMvcTest {
         verifyNoInteractions(service);
     }
 
+    // MVC-CAT-003
+    @Test
+    void productDetail_shouldReturnProductForStableUserId_whenAuthorized() throws Exception {
+        when(service.getProductDetail("SKU-A",
+                "11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222"))
+                .thenReturn(new ProductDTO("SKU-A", "Local", "Futbol", 19.5, 12, "Temporada"));
+        mvc.perform(get(PATH + "/SKU-A").with(authorized()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sku").value("SKU-A"))
+                .andExpect(jsonPath("$.id").doesNotExist());
+    }
+
+    // MVC-CAT-004
+    @Test
+    void productDetail_shouldReturn404_whenSkuDoesNotExist() throws Exception {
+        when(service.getProductDetail(org.mockito.ArgumentMatchers.eq("SKU-X"), org.mockito.ArgumentMatchers.anyString()))
+                .thenThrow(new com.camisetas360.catalog.service.ProductNotFoundException("SKU-X"));
+        mvc.perform(get(PATH + "/SKU-X").with(authorized())).andExpect(status().isNotFound());
+    }
+
+    // MVC-CAT-005
+    @Test
+    void productDetail_shouldReturn400WithoutBusinessCall_whenSkuIsInvalid() throws Exception {
+        mvc.perform(get(PATH + "/" + "x".repeat(65)).with(authorized())).andExpect(status().isBadRequest());
+        verifyNoInteractions(service);
+    }
+
+    // MVC-CAT-006
+    @Test
+    void products_shouldFilterBySkus_whenSkuParamIsPresent() throws Exception {
+        when(service.getProductsBySkus(List.of("SKU-A", "SKU-B")))
+                .thenReturn(List.of(new ProductDTO("SKU-A", "Local", "Futbol", 19.5, 12, null)));
+        mvc.perform(get(PATH).param("sku", "SKU-A", "SKU-B").with(authorized()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].sku").value("SKU-A"))
+                .andExpect(jsonPath("$.length()").value(1));
+        verify(service).getProductsBySkus(List.of("SKU-A", "SKU-B"));
+        verifyNoMoreInteractions(service);
+    }
+
+    // MVC-CAT-007
+    @Test
+    void products_shouldReturn400WithoutBusinessCall_whenSkuFilterIsInvalidOrTooLarge() throws Exception {
+        mvc.perform(get(PATH).param("sku", "bad sku!").with(authorized())).andExpect(status().isBadRequest());
+        mvc.perform(get(PATH).param("sku", Stream.iterate(1, i -> i + 1).limit(51).map(i -> "S" + i)
+                .toArray(String[]::new)).with(authorized())).andExpect(status().isBadRequest());
+        verifyNoInteractions(service);
+    }
+
     static Stream<String> protectedPaths() {
-        return Stream.of(PATH);
+        return Stream.of(PATH, PATH + "/SKU-A");
     }
 
     @ParameterizedTest

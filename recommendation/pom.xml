@@ -19,13 +19,27 @@
     <version>0.0.1-SNAPSHOT</version>
 
     <name>recommendation</name>
-    <description>AI recommendation microservice for Camisetas360</description>
+    <description>Recomendaciones por interacciones (vista, carrito, compra) para Camisetas360</description>
 
     <properties>
         <java.version>21</java.version>
-        <spring-ai.version>2.0.1</spring-ai.version>
         <jacoco.version>0.8.15</jacoco.version>
+        <aws.sdk.version>2.31.0</aws.sdk.version>
+        <!-- 1.1.0: ultima version con binarios nativos para Linux (Docker/CI) y Windows (desarrollo). -->
+        <tensorflow.version>1.1.0</tensorflow.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
 
@@ -60,10 +74,35 @@
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
 
-        <!-- Spring AI / Mistral -->
         <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-mistral-ai</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
+
+        <!-- Kafka: interacciones publicadas por catalog y carrito -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+        <!-- DynamoDB: copia de las interacciones en la tabla UserInteractions de la guia -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb</artifactId>
+        </dependency>
+
+        <!-- TensorFlow Java: modelo de recomendaciones de la guia Kafka + TensorFlow, dentro del servicio -->
+        <dependency>
+            <groupId>org.tensorflow</groupId>
+            <artifactId>tensorflow-framework</artifactId>
+            <version>${tensorflow.version}</version>
+        </dependency>
+        <!-- Binarios nativos de Linux: los usa la imagen Docker (ECS) y CI. -->
+        <dependency>
+            <groupId>org.tensorflow</groupId>
+            <artifactId>tensorflow-core-native</artifactId>
+            <version>${tensorflow.version}</version>
+            <classifier>linux-x86_64</classifier>
         </dependency>
 
         <!-- PostgreSQL -->
@@ -87,6 +126,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -120,22 +165,33 @@
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.ai</groupId>
-                <artifactId>spring-ai-bom</artifactId>
-                <version>${spring-ai.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <build>
         <plugins>
+
+            <!-- Contratos de seguridad compartidos (tests/security) -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>shared-security-tests</id>
+                        <phase>generate-test-sources</phase>
+                        <goals><goal>add-test-source</goal></goals>
+                        <configuration>
+                            <sources><source>${project.basedir}/../tests/security/src/test/java</source></sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
 
             <plugin>
                 <groupId>org.jacoco</groupId>
@@ -236,4 +292,23 @@
         </plugins>
     </build>
 
+    <profiles>
+        <!-- Desarrollo en Windows: agrega los binarios nativos locales (el JAR sigue incluyendo los de Linux). -->
+        <profile>
+            <id>tensorflow-windows</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>org.tensorflow</groupId>
+                    <artifactId>tensorflow-core-native</artifactId>
+                    <version>${tensorflow.version}</version>
+                    <classifier>windows-x86_64</classifier>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

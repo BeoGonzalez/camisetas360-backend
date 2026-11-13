@@ -1,5 +1,6 @@
 package com.camisetas360.auth.config;
 
+import jakarta.servlet.DispatcherType;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,6 +14,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtIssuerAuthenticationManagerResolver;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 import org.springframework.web.cors.CorsConfiguration;
@@ -20,8 +22,9 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
-@Import(JwtValidationConfig.class)
+@Import(IssuerAuthenticationConfig.class)
 public class SecurityConfig {
+    /** Converter de Entra ID (roles/scp/scope), sin cambios. */
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         var converter = new JwtAuthenticationConverter();
@@ -30,7 +33,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationConverter converter,
+    public SecurityFilterChain filterChain(HttpSecurity http, JwtIssuerAuthenticationManagerResolver issuers,
             @Qualifier("corsConfigurationSource") CorsConfigurationSource cors,
             @Value("${app.cors.enabled:false}") boolean localCors) throws Exception {
         http.csrf(csrf -> csrf.disable())
@@ -40,6 +43,8 @@ public class SecurityConfig {
                 })
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // sendError (400/404/405/415...) reenvia a /error: debe conservar el estado original, no volverse 401/403.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
                                 "/actuator/health/readiness").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -48,7 +53,8 @@ public class SecurityConfig {
                         .access(new WebExpressionAuthorizationManager(
                                 "hasAnyRole('CUSTOMER','CATALOG_MANAGER','ADMIN') and hasAuthority('SCOPE_Profile.Read')"))
                         .anyRequest().denyAll())
-                .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+                // Enruta por 'iss' exacto al AuthenticationManager del proveedor (Entra o Cognito); desconocido -> 401.
+                .oauth2ResourceServer(resource -> resource.authenticationManagerResolver(issuers));
         return http.build();
     }
 

@@ -59,6 +59,17 @@ management:
         include: health,info
   endpoint:
     health:
-      show-details: always
+      # Igual que el resto de servicios: health publico sin detalles internos, y las caidas
+      # de dependencias (BD/Kafka) no deben reiniciar la tarea de ECS.
+      show-details: never
+      show-components: never
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+  health:
+    db:
+      enabled: false

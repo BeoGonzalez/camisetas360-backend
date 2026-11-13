@@ -38,12 +38,45 @@ class OrderEventParserTest {
         assertThat(event).isNotNull();
         assertThat(event.eventId()).isEqualTo(expectedEventId);
         assertThat(event.orderId()).isEqualTo(expectedOrderId);
-        assertThat(event.itemCount()).isEqualTo(1);
+        assertThat(event.lineas()).containsExactly(new ParsedOrderEvent.Linea("CAM-01", 2, 25.0));
+        assertThat(event.usuarioId()).isNull();
+        assertThat(event.occurredAt()).isNull();
     }
 
     @Test
-    @DisplayName("Should parse userEmail and items array when present")
-    void shouldParseEmailAndItemsList() {
+    @DisplayName("Builds usuarioId <tid>:<oid> from the token owner and keeps occurredAt")
+    void shouldBuildOwnerFromTenantAndObjectId() {
+        String json = """
+                {
+                    "eventId": "%s",
+                    "orderId": 7,
+                    "occurredAt": "2026-01-01T12:00:00Z",
+                    "tenantId": "11111111-1111-1111-1111-111111111111",
+                    "objectId": "22222222-2222-2222-2222-222222222222",
+                    "items": [{"sku": "CAM-01", "quantity": 1, "unitPrice": 25.0}]
+                }
+                """.formatted(UUID.randomUUID());
+
+        ParsedOrderEvent event = parser.parse(json.getBytes(StandardCharsets.UTF_8));
+
+        assertThat(event.usuarioId())
+                .isEqualTo("11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222");
+        assertThat(event.occurredAt()).isEqualTo(java.time.Instant.parse("2026-01-01T12:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("Accepts occurredAt written as epoch seconds and ignores unparseable values")
+    void shouldBeLenientWithOccurredAt() {
+        String base = "{\"eventId\":\"%s\",\"orderId\":7,\"occurredAt\":%s,\"items\":[{\"sku\":\"A\"}]}";
+        assertThat(parser.parse(base.formatted(UUID.randomUUID(), "1767268800.5").getBytes(StandardCharsets.UTF_8)).occurredAt())
+                .isEqualTo(java.time.Instant.parse("2026-01-01T12:00:00.500Z"));
+        assertThat(parser.parse(base.formatted(UUID.randomUUID(), "\"ayer\"").getBytes(StandardCharsets.UTF_8)).occurredAt())
+                .isNull();
+    }
+
+    @Test
+    @DisplayName("Should parse every order line")
+    void shouldParseEveryLine() {
         UUID expectedEventId = UUID.randomUUID();
         long expectedOrderId = 42L;
         String json = """
@@ -60,8 +93,8 @@ class OrderEventParserTest {
 
         ParsedOrderEvent event = parser.parse(json.getBytes(StandardCharsets.UTF_8));
 
-        assertThat(event.userEmail()).isEqualTo("fan@camisetas360.test");
-        assertThat(event.items()).containsExactly("CAM-01 (x2)", "CAM-02 (x1)");
+        assertThat(event.lineas()).extracting(ParsedOrderEvent.Linea::sku).containsExactly("CAM-01", "CAM-02");
+        assertThat(event.lineas()).extracting(ParsedOrderEvent.Linea::quantity).containsExactly(2, 1);
     }
 
     @Test
@@ -84,7 +117,9 @@ class OrderEventParserTest {
             "{\"eventId\":\"00000000-0000-0000-0000-000000000002\",\"orderId\":42,\"items\":[]}",
             "{\"eventId\":\"00000000-0000-0000-0000-000000000002\",\"orderId\":-1,\"items\":[{\"sku\":\"A\"}]}",
             "{\"eventId\":\"00000000-0000-0000-0000-000000000002\",\"orderId\":0,\"items\":[{\"sku\":\"A\"}]}",
-            "{\"eventId\":\"00000000-0000-0000-0000-000000000002\",\"orderId\":42,\"items\":\"not-array\"}"
+            "{\"eventId\":\"00000000-0000-0000-0000-000000000002\",\"orderId\":42,\"items\":\"not-array\"}",
+            "{\"eventId\":\"00000000-0000-0000-0000-000000000002\",\"orderId\":42,\"items\":[{\"quantity\":1}]}",
+            "{\"eventId\":\"00000000-0000-0000-0000-000000000002\",\"orderId\":42,\"tenantId\":\"bad\",\"items\":[{\"sku\":\"A\"}]}"
     })
     @DisplayName("Should throw InvalidEventContractException for malformed payloads")
     void shouldThrowForMalformedPayloads(String invalidJson) {

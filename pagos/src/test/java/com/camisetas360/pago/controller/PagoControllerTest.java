@@ -21,7 +21,6 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -34,162 +33,243 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(GlobalExceptionHandler.class)
 class PagoControllerTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+        @Autowired
+        private MockMvc mockMvc;
 
-    private final ObjectMapper objectMapper = new ObjectMapper()
-            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        private final ObjectMapper objectMapper = new ObjectMapper()
+                        .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
 
-    @MockitoBean
-    private PagoService pagoService;
+        @MockitoBean
+        private PagoService pagoService;
 
-    @Test
-    @DisplayName("POST /api/v1/pago/iniciar retorna 201 Created cuando es exitoso")
-    void iniciarPagoExitoso() throws Exception {
-        UUID ordenId = UUID.randomUUID();
-        UUID pagoId = UUID.randomUUID();
+        @Test
+        @DisplayName("POST /api/v1/pago/iniciar retorna 201 Created cuando es exitoso")
+        void iniciarPagoExitoso() throws Exception {
+                UUID ordenId = UUID.randomUUID();
+                UUID pagoId = UUID.randomUUID();
 
-        IniciarPagoRequest request = new IniciarPagoRequest(
-                ordenId,
-                BigDecimal.valueOf(15000),
-                "4532123456789012",
-                "123",
-                10,
-                2026,
-                "Cliente Test"
-        );
+                IniciarPagoRequest request = new IniciarPagoRequest(
+                                ordenId,
+                                BigDecimal.valueOf(15000),
+                                "4532123456789012",
+                                "123",
+                                10,
+                                2026,
+                                "Cliente Test");
 
-        IniciarPagoResponse response = new IniciarPagoResponse(
-                pagoId,
-                ordenId,
-                BigDecimal.valueOf(15000),
-                "INICIADO",
-                "tok_test_123",
-                "http://localhost:8087/api/v1/pago/retorno?token_ws=tok_test_123",
-                "9012",
-                "VISA"
-        );
+                IniciarPagoResponse response = new IniciarPagoResponse(
+                                pagoId,
+                                ordenId,
+                                BigDecimal.valueOf(15000),
+                                "INICIADO",
+                                "tok_test_123",
+                                "http://localhost:8087/api/v1/pago/retorno?token_ws=tok_test_123",
+                                "9012",
+                                "VISA");
 
-        when(pagoService.iniciarPago(any(IniciarPagoRequest.class))).thenReturn(response);
+                when(pagoService.iniciarPago(any(IniciarPagoRequest.class))).thenReturn(response);
 
-        mockMvc.perform(post("/api/v1/pago/iniciar")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.pagoId").value(pagoId.toString()))
-                .andExpect(jsonPath("$.ordenId").value(ordenId.toString()))
-                .andExpect(jsonPath("$.estado").value("INICIADO"))
-                .andExpect(jsonPath("$.token").value("tok_test_123"))
-                .andExpect(jsonPath("$.tarjetaUltimos4").value("9012"));
-    }
+                mockMvc.perform(post("/api/v1/pago/iniciar")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.pagoId").value(pagoId.toString()))
+                                .andExpect(jsonPath("$.ordenId").value(ordenId.toString()))
+                                .andExpect(jsonPath("$.estado").value("INICIADO"))
+                                .andExpect(jsonPath("$.token").value("tok_test_123"))
+                                .andExpect(jsonPath("$.tarjetaUltimos4").value("9012"));
+        }
 
-    @Test
-    @DisplayName("POST /api/v1/pago/iniciar retorna 429 Too Many Requests cuando se detecta fraude")
-    void iniciarPagoBloqueadoRetorna429() throws Exception {
-        UUID ordenId = UUID.randomUUID();
-        UUID pagoId = UUID.randomUUID();
+        @Test
+        @DisplayName("POST /api/v1/pago/iniciar retorna 429 Too Many Requests cuando se detecta fraude")
+        void iniciarPagoBloqueadoRetorna429() throws Exception {
+                UUID ordenId = UUID.randomUUID();
+                UUID pagoId = UUID.randomUUID();
 
-        IniciarPagoRequest request = new IniciarPagoRequest(
-                ordenId,
-                BigDecimal.valueOf(15000),
-                "4532123456789012",
-                "123",
-                10,
-                2026,
-                "Cliente Test"
-        );
+                IniciarPagoRequest request = new IniciarPagoRequest(
+                                ordenId,
+                                BigDecimal.valueOf(15000),
+                                "4532123456789012",
+                                "123",
+                                10,
+                                2026,
+                                "Cliente Test");
 
-        when(pagoService.iniciarPago(any(IniciarPagoRequest.class))).thenThrow(
-                new FraudeDetectadoException(
-                        "Bloqueado preventivamente por antifraude: 4 intentos en ventana de 10 segundos",
-                        ordenId,
-                        pagoId,
-                        "hash-dummy",
-                        "9012",
-                        4,
-                        10
-                )
-        );
+                when(pagoService.iniciarPago(any(IniciarPagoRequest.class))).thenThrow(
+                                new FraudeDetectadoException(
+                                                "Bloqueado preventivamente por antifraude: 4 intentos en ventana de 10 segundos",
+                                                ordenId,
+                                                pagoId,
+                                                "hash-dummy",
+                                                "9012",
+                                                4,
+                                                10));
 
-        mockMvc.perform(post("/api/v1/pago/iniciar")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(jsonPath("$.status").value(429))
-                .andExpect(jsonPath("$.error").value("TOO_MANY_REQUESTS"))
-                .andExpect(jsonPath("$.codigo").value("BLOQUEADO_FRAUDE"))
-                .andExpect(jsonPath("$.ordenId").value(ordenId.toString()))
-                .andExpect(jsonPath("$.pagoId").value(pagoId.toString()))
-                .andExpect(jsonPath("$.tarjetaUltimos4").value("9012"))
-                .andExpect(jsonPath("$.intentosDetectados").value(4))
-                .andExpect(jsonPath("$.ventanaSegundos").value(10));
-    }
+                mockMvc.perform(post("/api/v1/pago/iniciar")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isTooManyRequests())
+                                .andExpect(jsonPath("$.status").value(429))
+                                .andExpect(jsonPath("$.error").value("TOO_MANY_REQUESTS"))
+                                .andExpect(jsonPath("$.codigo").value("BLOQUEADO_FRAUDE"))
+                                .andExpect(jsonPath("$.ordenId").value(ordenId.toString()))
+                                .andExpect(jsonPath("$.pagoId").value(pagoId.toString()))
+                                .andExpect(jsonPath("$.tarjetaUltimos4").value("9012"))
+                                .andExpect(jsonPath("$.intentosDetectados").value(4))
+                                .andExpect(jsonPath("$.ventanaSegundos").value(10));
+        }
 
-    @Test
-    @DisplayName("POST /api/v1/pago/confirmar retorna 200 OK con pago confirmado")
-    void confirmarPagoExitoso() throws Exception {
-        UUID ordenId = UUID.randomUUID();
-        UUID pagoId = UUID.randomUUID();
+        @Test
+        @DisplayName("POST /api/v1/pago/confirmar retorna 200 OK con pago confirmado")
+        void confirmarPagoExitoso() throws Exception {
+                UUID ordenId = UUID.randomUUID();
+                UUID pagoId = UUID.randomUUID();
 
-        ConfirmarPagoRequest request = new ConfirmarPagoRequest("tok_test_123");
+                ConfirmarPagoRequest request = new ConfirmarPagoRequest("tok_test_123");
 
-        PagoResponseDTO response = new PagoResponseDTO(
-                pagoId,
-                ordenId,
-                BigDecimal.valueOf(15000),
-                "CLP",
-                EstadoPago.AUTORIZADO,
-                "tok_test_123",
-                "AUTH-123456",
-                "9012",
-                "VISA",
-                "Aprobada",
-                Instant.now(),
-                Instant.now()
-        );
+                PagoResponseDTO response = new PagoResponseDTO(
+                                pagoId,
+                                ordenId,
+                                BigDecimal.valueOf(15000),
+                                "CLP",
+                                EstadoPago.AUTORIZADO,
+                                "tok_test_123",
+                                "AUTH-123456",
+                                "9012",
+                                "VISA",
+                                "Aprobada",
+                                Instant.now(),
+                                Instant.now());
 
-        when(pagoService.confirmarPago("tok_test_123")).thenReturn(response);
+                when(pagoService.confirmarPago("tok_test_123")).thenReturn(response);
 
-        mockMvc.perform(post("/api/v1/pago/confirmar")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.estado").value("AUTORIZADO"))
-                .andExpect(jsonPath("$.codigoAutorizacion").value("AUTH-123456"));
-    }
+                mockMvc.perform(post("/api/v1/pago/confirmar")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.estado").value("AUTORIZADO"))
+                                .andExpect(jsonPath("$.codigoAutorizacion").value("AUTH-123456"));
+        }
 
-    @Test
-    @DisplayName("GET /api/v1/pago/{id} retorna 200 OK o 404 si no existe")
-    void obtenerPorId() throws Exception {
-        UUID pagoId = UUID.randomUUID();
-        UUID ordenId = UUID.randomUUID();
+        @Test
+        @DisplayName("GET /api/v1/pago/{id} retorna 200 OK o 404 si no existe")
+        void obtenerPorId() throws Exception {
+                UUID pagoId = UUID.randomUUID();
+                UUID ordenId = UUID.randomUUID();
 
-        PagoResponseDTO response = new PagoResponseDTO(
-                pagoId,
-                ordenId,
-                BigDecimal.valueOf(15000),
-                "CLP",
-                EstadoPago.INICIADO,
-                "tok_123",
-                null,
-                "9012",
-                "VISA",
-                null,
-                Instant.now(),
-                Instant.now()
-        );
+                PagoResponseDTO response = new PagoResponseDTO(
+                                pagoId,
+                                ordenId,
+                                BigDecimal.valueOf(15000),
+                                "CLP",
+                                EstadoPago.INICIADO,
+                                "tok_123",
+                                null,
+                                "9012",
+                                "VISA",
+                                null,
+                                Instant.now(),
+                                Instant.now());
 
-        when(pagoService.obtenerPagoPorId(pagoId)).thenReturn(response);
+                when(pagoService.obtenerPagoPorId(pagoId)).thenReturn(response);
 
-        mockMvc.perform(get("/api/v1/pago/" + pagoId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(pagoId.toString()));
+                mockMvc.perform(get("/api/v1/pago/" + pagoId))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.id").value(pagoId.toString()));
 
-        UUID inexistente = UUID.randomUUID();
-        when(pagoService.obtenerPagoPorId(inexistente)).thenThrow(new PagoNotFoundException("No encontrado"));
+                UUID inexistente = UUID.randomUUID();
+                when(pagoService.obtenerPagoPorId(inexistente)).thenThrow(new PagoNotFoundException("No encontrado"));
 
-        mockMvc.perform(get("/api/v1/pago/" + inexistente))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").value("NOT_FOUND"));
-    }
+                mockMvc.perform(get("/api/v1/pago/" + inexistente))
+                                .andExpect(status().isNotFound())
+                                .andExpect(jsonPath("$.error").value("NOT_FOUND"));
+        }
+
+        @Test
+        @DisplayName("GET /api/v1/pago/{id} con UUID malformado retorna 400 Problem Details")
+        void uuidMalformadoRetorna400() throws Exception {
+                mockMvc.perform(get("/api/v1/pago/no-es-uuid"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                                .andExpect(jsonPath("$.status").value(400))
+                                .andExpect(jsonPath("$.title").value("Bad Request"))
+                                .andExpect(jsonPath("$.error").value("BAD_REQUEST"))
+                                .andExpect(jsonPath("$.mensaje").exists());
+        }
+
+        @Test
+        @DisplayName("POST /api/v1/pago/iniciar con JSON malformado retorna 400")
+        void jsonMalformadoRetorna400() throws Exception {
+                mockMvc.perform(post("/api/v1/pago/iniciar")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{malformado"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                                .andExpect(jsonPath("$.error").value("BAD_REQUEST"));
+        }
+
+        @Test
+        @DisplayName("Ruta inexistente retorna 404 y metodo no soportado retorna 405")
+        void erroresDeRutaNoSon500() throws Exception {
+                mockMvc.perform(get("/api/v1/pago/no/existe"))
+                                .andExpect(status().isNotFound())
+                                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                                .andExpect(jsonPath("$.status").value(404));
+
+                mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                                .delete("/api/v1/pago/" + UUID.randomUUID()))
+                                .andExpect(status().isMethodNotAllowed())
+                                .andExpect(jsonPath("$.status").value(405));
+        }
+
+        @Test
+        @DisplayName("GET /api/v1/pago/retorno sin token_ws retorna 400")
+        void retornoSinTokenRetorna400() throws Exception {
+                mockMvc.perform(get("/api/v1/pago/retorno"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.status").value(400));
+        }
+
+        @Test
+        @DisplayName("Errores de validacion se responden como Problem Details manteniendo campos legados")
+        void validacionComoProblemDetails() throws Exception {
+                mockMvc.perform(post("/api/v1/pago/confirmar")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"token\":\"\"}"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                                .andExpect(jsonPath("$.status").value(400))
+                                .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"))
+                                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("token")))
+                                .andExpect(jsonPath("$.mensaje").value(org.hamcrest.Matchers.containsString("token")));
+        }
+
+        @Test
+        @DisplayName("POST /api/v1/pago/iniciar acepta tarjeta Redcompra sin CVV")
+        void iniciarSinCvvEsValido() throws Exception {
+                when(pagoService.iniciarPago(any(IniciarPagoRequest.class))).thenReturn(new IniciarPagoResponse(
+                                UUID.randomUUID(), UUID.randomUUID(), BigDecimal.valueOf(1000), "INICIADO",
+                                "tok", "http://x", "7763", "VISA"));
+
+                mockMvc.perform(post("/api/v1/pago/iniciar")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"ordenId":"%s","monto":1000,"numeroTarjeta":"4051884239937763",
+                                         "mesVencimiento":12,"anioVencimiento":2030}
+                                        """.formatted(UUID.randomUUID())))
+                                .andExpect(status().isCreated());
+        }
+
+        @Test
+        @DisplayName("POST /api/v1/pago/iniciar rechaza CVV con formato invalido")
+        void cvvInvalidoRetorna400() throws Exception {
+                mockMvc.perform(post("/api/v1/pago/iniciar")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"ordenId":"%s","monto":1000,"numeroTarjeta":"4051885600446623",
+                                         "cvv":"12a","mesVencimiento":12,"anioVencimiento":2030}
+                                        """.formatted(UUID.randomUUID())))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.mensaje").value(org.hamcrest.Matchers.containsString("cvv")));
+        }
 }
