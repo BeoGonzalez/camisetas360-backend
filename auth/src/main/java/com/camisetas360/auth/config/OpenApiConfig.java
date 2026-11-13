@@ -24,7 +24,8 @@ public class OpenApiConfig {
                                 .name("BearerAuth")
                                 .type(SecurityScheme.Type.HTTP)
                                 .scheme("bearer")
-                                .bearerFormat("JWT")));
+                                .bearerFormat("JWT")
+                                .description("Access token de Microsoft Entra ID o de Amazon Cognito (mismo esquema Bearer)")));
     }
 }
 

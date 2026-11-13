@@ -1,0 +1,73 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: analytics-service
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${ENTRA_ISSUER_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
+          audiences:
+            - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
+
+app:
+  cors:
+    enabled: false
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    listeners-enabled: ${KAFKA_LISTENERS_ENABLED:true}
+
+  dynamodb:
+    # En ECS se usa la region y las credenciales del task role (LabRole).
+    region: ${AWS_REGION:us-east-1}
+    # Solo en local: endpoint de DynamoDB Local (p. ej. http://dynamodb-local:8000).
+    endpoint: ${DYNAMODB_ENDPOINT:}
+    table-prefix: ${DYNAMODB_TABLE_PREFIX:camisetas360-analytics-}
+    create-tables: ${DYNAMODB_CREATE_TABLES:true}
+    # DynamoDB Streams (NEW_IMAGE) en la tabla de productos: fuente de la Lambda de telemetria
+    # que publica por API Gateway WebSocket (ver docs/telemetria/README.md).
+    productos-stream: ${DYNAMODB_PRODUCTOS_STREAM:true}
+    eventos-ttl-dias: 90
+
+  recomendaciones:
+    limite: 6
+
+  metricas:
+    intervalo-ms: 2000
+    umbral-navegacion: 20
+    umbral-pico: 60
+
+  websocket:
+    # Origen del frontend (URL del API Gateway del frontend). Varios separados por coma.
+    allowed-origin-patterns: ${WEBSOCKET_ALLOWED_ORIGINS:http://localhost:*}
+
+logging:
+  level:
+    com.camisetas360.analytics: INFO
+    org.apache.kafka: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true

@@ -58,6 +58,8 @@ jobs:
           - orders
           - notifications
           - recommendation
+          - pagos
+          - analytics
 
     steps:
 
@@ -261,6 +263,69 @@ jobs:
           path: |
             .ci-artifacts/${{ matrix.service }}/*.jar
             .ci-artifacts/${{ matrix.service }}/*.sha256
+
+
+  # ============================================================
+  # AWS LAMBDA (telemetria en tiempo real por API Gateway WebSocket)
+  #
+  # No es un servicio ECS: no tiene Dockerfile ni entra al deploy.
+  # El jar verificado queda como artefacto "lambda-telemetria"
+  # para subirlo a las Lambdas Mensajero y Stream en AWS Academy.
+  # ============================================================
+
+  lambdas:
+    name: Test telemetria Lambda
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: |
+            telemetria/pom.xml
+            telemetria/.mvn/wrapper/maven-wrapper.properties
+
+      - name: Verify telemetria Lambda
+        working-directory: telemetria
+        run: |
+          set -euo pipefail
+
+          bash ./mvnw -B -ntp clean verify 2>&1 | tee ci-verify.log
+
+          test -s target/site/jacoco/jacoco.xml
+          test -s target/telemetria-lambda-0.0.1-SNAPSHOT.jar
+
+      - name: Upload test results and coverage
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-telemetria
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            telemetria/ci-verify.log
+            telemetria/target/surefire-reports/
+            telemetria/target/site/jacoco/
+
+      - name: Upload Lambda JAR
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lambda-telemetria
+          retention-days: 14
+          if-no-files-found: error
+          path: telemetria/target/telemetria-lambda-0.0.1-SNAPSHOT.jar
 
 
   # ============================================================
@@ -564,6 +629,7 @@ jobs:
 
     needs:
       - services
+      - lambdas
       - messaging
       - e2e
       - compose
@@ -576,6 +642,7 @@ jobs:
       - name: Show quality gate results
         env:
           SERVICES_RESULT: ${{ needs.services.result }}
+          LAMBDAS_RESULT: ${{ needs.lambdas.result }}
           MESSAGING_RESULT: ${{ needs.messaging.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
@@ -586,6 +653,7 @@ jobs:
             echo "| Suite | Result |"
             echo "|---|---|"
             echo "| Services | ${SERVICES_RESULT} |"
+            echo "| Telemetria Lambda | ${LAMBDAS_RESULT} |"
             echo "| Messaging | ${MESSAGING_RESULT} |"
             echo "| E2E | ${E2E_RESULT} |"
             echo "| Docker Compose | ${COMPOSE_RESULT} |"
@@ -594,6 +662,7 @@ jobs:
       - name: Require every test suite to succeed
         env:
           SERVICES_RESULT: ${{ needs.services.result }}
+          LAMBDAS_RESULT: ${{ needs.lambdas.result }}
           MESSAGING_RESULT: ${{ needs.messaging.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
@@ -601,6 +670,7 @@ jobs:
           set -euo pipefail
 
           test "${SERVICES_RESULT}" = "success"
+          test "${LAMBDAS_RESULT}" = "success"
           test "${MESSAGING_RESULT}" = "success"
           test "${E2E_RESULT}" = "success"
           test "${COMPOSE_RESULT}" = "success"

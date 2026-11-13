@@ -15,7 +15,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.Arguments;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.AmqpException;
@@ -23,7 +22,12 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
+import org.springframework.transaction.support.TransactionOperations;
+
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,12 +44,26 @@ class CartServiceTest {
     @Mock
     private com.camisetas360.carrito.repository.CheckoutRequestRepository checkouts;
 
-    @InjectMocks
+    @Mock
+    private CatalogoProductos catalogo;
+
     private CartService service;
 
     @BeforeEach
     void clearPreviousAuthentication() {
         SecurityContextHolder.clearContext();
+        service = new CartService(publisher, checkouts, catalogo, TransactionOperations.withoutTransaction());
+    }
+
+    /** El catalogo responde con estos precios; los SKU ausentes del mapa no existen. */
+    private void catalogoConPrecios(Map<String, Double> precios) {
+        lenient().when(catalogo.buscar(any())).thenAnswer(inv -> {
+            Collection<String> skus = inv.getArgument(0);
+            var encontrados = new LinkedHashMap<String, ProductoCatalogo>();
+            skus.stream().filter(precios::containsKey)
+                    .forEach(sku -> encontrados.put(sku, new ProductoCatalogo(sku, "Producto " + sku, null, precios.get(sku))));
+            return encontrados;
+        });
     }
 
     @AfterEach
@@ -57,6 +75,7 @@ class CartServiceTest {
     @Test
     void createOrder_shouldPublishCheckoutRequestedEvent_whenRequestIsValid() {
         authenticate("Buyer@example.test");
+        catalogoConPrecios(Map.of("SKU-A", 19.5, "SKU-B", 10.0));
         var request = new OrderRequestDTO(List.of(
                 new OrderItemDTO("SKU-A", 2, 19.5),
                 new OrderItemDTO("SKU-B", 3, 10.0)));
@@ -89,8 +108,9 @@ class CartServiceTest {
     @ParameterizedTest
     @MethodSource("validTotals")
     void createOrder_shouldCalculateTotal_whenItemsHaveDifferentQuantities(
-            List<OrderItemDTO> items, double expectedTotal) {
+            List<OrderItemDTO> items, Map<String, Double> preciosCatalogo, double expectedTotal) {
         authenticate("buyer@example.test");
+        catalogoConPrecios(preciosCatalogo);
 
         var response = service.createOrder(new OrderRequestDTO(items));
 
@@ -102,9 +122,10 @@ class CartServiceTest {
     static Stream<Arguments> validTotals() {
         return Stream.of(
                 Arguments.of(List.of(new OrderItemDTO("A", 2, 19.5),
-                        new OrderItemDTO("B", 3, 10.0)), 69.0),
-                Arguments.of(List.of(new OrderItemDTO("A", 1, 19.5)), 19.5),
-                Arguments.of(List.of(new OrderItemDTO("A", 1, 0.01)), 0.01));
+                        new OrderItemDTO("B", 3, 10.0)), Map.of("A", 19.5, "B", 10.0), 69.0),
+                Arguments.of(List.of(new OrderItemDTO("A", 1, 19.5)), Map.of("A", 19.5), 19.5),
+                // El precio enviado por el cliente se ignora: manda el catalogo.
+                Arguments.of(List.of(new OrderItemDTO("A", 1, 0.01)), Map.of("A", 49.99), 49.99));
     }
 
     // UT-CART-003
@@ -117,6 +138,7 @@ class CartServiceTest {
 
         assertThat(failure).hasMessage("A valid contact email is required for checkout notifications");
         verify(publisher, never()).publishCheckoutRequested(any());
+        verifyNoInteractions(catalogo);
     }
 
     // UT-CART-004
@@ -135,6 +157,7 @@ class CartServiceTest {
     @Test
     void createOrder_shouldPropagateFailure_whenPublisherFails() {
         authenticate("buyer@example.test");
+        catalogoConPrecios(Map.of("SKU-A", 19.5));
         var failure = new AmqpException("broker unavailable");
         doThrow(failure).when(publisher).publishCheckoutRequested(any());
 
@@ -148,11 +171,63 @@ class CartServiceTest {
     @Test
     void missingUsernameCanUseContactEmailClaim() {
         authenticate(null);
+        catalogoConPrecios(Map.of("SKU-A", 19.5));
         var original=(Jwt)SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         var jwt=Jwt.withTokenValue("test").header("alg","none")
                 .claims(claims->claims.putAll(original.getClaims())).claim("email","contact@example.test").build();
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
         assertThat(service.createOrder(validRequest()).userEmail()).isEqualTo("contact@example.test");
+    }
+
+    // UT-CART-006
+    @Test
+    void createOrder_shouldUseCatalogPrices_ignoringClientPrices() {
+        authenticate("buyer@example.test");
+        catalogoConPrecios(Map.of("CAM-003", 49.99));
+
+        var response = service.createOrder(new OrderRequestDTO(List.of(new OrderItemDTO("CAM-003", 2, 0.01))));
+
+        var captor = ArgumentCaptor.forClass(CheckoutRequestedEvent.class);
+        verify(publisher).publishCheckoutRequested(captor.capture());
+        assertThat(captor.getValue().items()).containsExactly(new CheckoutItemEvent("CAM-003", 2, 49.99));
+        assertThat(response.totalAmount()).isEqualTo(99.98);
+        verify(checkouts).saveAndFlush(any());
+    }
+
+    // UT-CART-007
+    @Test
+    void createOrder_shouldRejectUnknownSkuWithoutPersistingOrPublishing() {
+        authenticate("buyer@example.test");
+        catalogoConPrecios(Map.of("SKU-A", 19.5));
+
+        var failure = assertThrows(ProductoNoDisponibleException.class, () -> service.createOrder(new OrderRequestDTO(
+                List.of(new OrderItemDTO("SKU-A", 1, 19.5), new OrderItemDTO("NO-EXISTE", 1, 10.0)))));
+
+        assertThat(failure.getMessage()).contains("NO-EXISTE");
+        verifyNoInteractions(publisher, checkouts);
+    }
+
+    // UT-CART-008
+    @Test
+    void createOrder_shouldFailWithoutPersisting_whenCatalogIsUnavailable() {
+        authenticate("buyer@example.test");
+        when(catalogo.buscar(any())).thenThrow(new CatalogoNoDisponibleException(new RuntimeException("timeout")));
+
+        assertThrows(CatalogoNoDisponibleException.class, () -> service.createOrder(validRequest()));
+
+        verifyNoInteractions(publisher, checkouts);
+    }
+
+    // UT-CART-009
+    @Test
+    void createOrder_shouldQueryCatalogOnceWithDistinctSkus() {
+        authenticate("buyer@example.test");
+        catalogoConPrecios(Map.of("SKU-A", 19.5, "SKU-B", 10.0));
+
+        service.createOrder(new OrderRequestDTO(List.of(new OrderItemDTO("SKU-A", 1, 1.0),
+                new OrderItemDTO("SKU-B", 1, 1.0), new OrderItemDTO("SKU-A", 2, 1.0))));
+
+        verify(catalogo, times(1)).buscar(List.of("SKU-A", "SKU-B"));
     }
 
     private static OrderRequestDTO validRequest() {

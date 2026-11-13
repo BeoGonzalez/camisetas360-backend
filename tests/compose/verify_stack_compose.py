@@ -58,10 +58,10 @@ def main():
                 "SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH": "false", "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE": "false",
                 "SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_REQUIRED": "false", "APP_CORS_ENABLED": "false"}
             if service == "recommendation":
-                environment["SPRING_AI_MODEL_CHAT"] = "none"
-                environment["SPRING_AI_MODEL_EMBEDDING"] = "none"
-                environment["SPRING_AUTOCONFIGURE_EXCLUDE"] = ",".join("org.springframework.ai.model.mistralai.autoconfigure.MistralAi" + name + "AutoConfiguration"
-                    for name in ("Chat", "Embedding", "Moderation", "Ocr"))
+                # Este stack no levanta Kafka: las compras llegan por RabbitMQ (order.created).
+                environment["KAFKA_LISTENERS_ENABLED"] = "false"
+                # Ni DynamoDB: la copia a UserInteractions se prueba en SincronizacionDynamoDbIT.
+                environment["DYNAMODB_ENABLED"] = "false"
             stack.document["services"][service] = {"build": {"context": str(ROOT / service)}, "environment": environment,
                 "networks": ["bus", service + "-db"], "ports": ["127.0.0.1::8080"],
                 "extra_hosts": ["host.docker.internal:host-gateway"],
@@ -87,11 +87,12 @@ def main():
         assert request(urls["orders"] + "/api/v1/orders", tokens["foreignToken"]) == []
         request(urls["notifications"] + "/api/v1/notifications/email", owner,
             {"to": "qa@example.test", "subject": "unauthorized", "body": "test"}, expected=403)
-        request(urls["recommendation"] + "/api/v1/recommendations", expected=404)
+        request(urls["recommendation"] + "/api/v1/recomendaciones", expected=401)
         eventually(lambda: request(stack.url("smtp", 8025) + "/api/v1/messages")["messages"] or False)
         assert stack.sql("orders", "SELECT count(*) FROM orders WHERE tenant_id IS NOT NULL AND object_id IS NOT NULL") == "1"
         assert stack.sql("carrito", "SELECT count(*) FROM checkout_requests WHERE tenant_id IS NOT NULL AND object_id IS NOT NULL") == "1"
         eventually(lambda: stack.sql("recommendation", "SELECT count(*) FROM recommendation_order_inbox") == "1")
+        eventually(lambda: stack.sql("recommendation", "SELECT sku FROM recomendaciones WHERE posicion = 1") == "QA")
         stack.compose("stop", "rabbit", "smtp")
         for service in SERVICES:
             assert request(urls[service] + "/actuator/health/liveness")["status"] == "UP"
@@ -100,7 +101,7 @@ def main():
         eventually(lambda: stack.compose("exec", "-T", "rabbit", "rabbitmq-diagnostics", "-q", "ping", check=False).returncode == 0)
         (TARGET / "stack-result.json").write_text(json.dumps({"result": "PASS", "services": list(SERVICES),
             "health": "200 redacted", "checkout": accepted["status"], "ownership": "foreign identity denied",
-            "rabbitmq_smtp": "delivered", "recommendation": "private worker; no business API"}), encoding="utf-8")
+            "rabbitmq_smtp": "delivered", "recommendation": "purchase -> top 5; API requires JWT"}), encoding="utf-8")
         print("PASS: six service health paths, signed JWT, checkout, ownership, RabbitMQ and SMTP")
     finally:
         if issuer:

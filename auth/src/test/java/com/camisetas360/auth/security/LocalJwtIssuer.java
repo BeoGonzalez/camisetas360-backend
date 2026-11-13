@@ -85,6 +85,13 @@ final class LocalJwtIssuer implements AutoCloseable {
         return jwt.serialize();
     }
 
+    /** Firma claims arbitrarios con la clave de confianza de Entra (tests de firma cruzada entre proveedores). */
+    String sign(JWTClaimsSet claims) throws JOSEException {
+        var jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(trustedKey.getKeyID()).build(), claims);
+        jwt.sign(new RSASSASigner(trustedKey));
+        return jwt.serialize();
+    }
+
     @Override
     public void close() {
         server.stop(0);

@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
@@ -27,10 +26,9 @@ import static org.assertj.core.api.Assertions.*;
 import static org.awaitility.Awaitility.await;
 
 @Testcontainers
-@ActiveProfiles("messaging")
 @SpringBootTest(properties = {
         "spring.rabbitmq.publisher-confirm-type=correlated", "spring.rabbitmq.publisher-returns=true",
-        "spring.rabbitmq.template.mandatory=true"
+        "spring.rabbitmq.template.mandatory=true", "app.kafka.listeners-enabled=false", "app.dynamodb.enabled=false", "app.tensorflow.enabled=false"
 })
 class RabbitDeliveryIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17");
@@ -57,6 +55,8 @@ class RabbitDeliveryIT {
     @BeforeEach
     void clean() {
         jdbc.update("DELETE FROM recommendation_order_inbox");
+        jdbc.update("DELETE FROM interacciones");
+        jdbc.update("DELETE FROM recomendaciones");
         while (rabbit.receive(RabbitMQConfig.DLQ) != null) { }
     }
 
@@ -77,6 +77,30 @@ class RabbitDeliveryIT {
         assertThat(rabbit.receive(notification.getName(), 5000)).isNotNull();
         assertThat(rabbit.receive(notification.getName(), 5000)).isNotNull();
         assertThat(inbox.accept(body)).isFalse();
+    }
+
+    @Test
+    void purchaseWithOwnerBecomesTop5Entry() throws Exception {
+        var id = UUID.randomUUID();
+        byte[] body = ("{\"eventId\":\"" + id + "\",\"orderId\":43,"
+                + "\"tenantId\":\"11111111-1111-1111-1111-111111111111\","
+                + "\"objectId\":\"22222222-2222-2222-2222-222222222222\","
+                + "\"occurredAt\":\"2026-01-01T12:00:00Z\","
+                + "\"items\":[{\"sku\":\"SKU-A\",\"quantity\":2,\"unitPrice\":20.0}]}")
+                .getBytes(StandardCharsets.UTF_8);
+        publish(body);
+        publish(body);
+        String usuario = "11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222";
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertThat(jdbc.queryForList(
+                "SELECT sku, puntaje FROM recomendaciones WHERE usuario_id = ? ORDER BY posicion", usuario))
+                .singleElement()
+                .satisfies(row -> {
+                    assertThat(row.get("sku")).isEqualTo("SKU-A");
+                    assertThat(row.get("puntaje")).isEqualTo(3);
+                }));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM interacciones WHERE accion = 'COMPRA'", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT processed_at IS NOT NULL FROM recommendation_order_inbox WHERE event_id = ?",
+                Boolean.class, id)).isTrue();
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.camisetas360.carrito.security;
 
+import jakarta.servlet.DispatcherType;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +23,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @Configuration
 @Import(JwtValidationConfig.class)
 public class SecurityConfig {
+    /** El carrito y el checkout comparten el mismo permiso de Entra (rol CUSTOMER + scope Checkout.Create). */
+    static final String CUSTOMER_CART = "hasRole('CUSTOMER') and hasAuthority('SCOPE_Checkout.Create')";
+
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         var converter = new JwtAuthenticationConverter();
@@ -40,13 +44,22 @@ public class SecurityConfig {
                 })
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // sendError (400/404/405/415...) reenvia a /error: debe conservar el estado original, no volverse 401/403.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
                                 "/actuator/health/readiness").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/carrito/checkout")
-                        .access(new WebExpressionAuthorizationManager(
-                                "hasRole('CUSTOMER') and hasAuthority('SCOPE_Checkout.Create')"))
+                        .access(new WebExpressionAuthorizationManager(CUSTOMER_CART))
+                        .requestMatchers(HttpMethod.GET, "/api/v1/carrito")
+                        .access(new WebExpressionAuthorizationManager(CUSTOMER_CART))
+                        .requestMatchers(HttpMethod.POST, "/api/v1/carrito/items")
+                        .access(new WebExpressionAuthorizationManager(CUSTOMER_CART))
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/carrito/items/*")
+                        .access(new WebExpressionAuthorizationManager(CUSTOMER_CART))
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/carrito/envio")
+                        .access(new WebExpressionAuthorizationManager(CUSTOMER_CART))
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
         return http.build();
@@ -62,7 +75,7 @@ public class SecurityConfig {
         }
         var config = new CorsConfiguration();
         config.setAllowedOriginPatterns(origins);
-        config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
         config.setAllowCredentials(false);
         var result = new UrlBasedCorsConfigurationSource();

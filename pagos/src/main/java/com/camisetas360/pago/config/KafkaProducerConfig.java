@@ -8,7 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
-import org.springframework.kafka.support.serializer.JsonSerializer;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -16,8 +15,16 @@ import java.util.Map;
 @Configuration
 public class KafkaProducerConfig {
 
-    @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
-    private String bootstrapServers;
+    /** Igual al timeout con que OutboxRelay espera el ack: un envio no debe bloquear mas que eso. */
+    private static final int TIMEOUT_ENVIO_MS = 5000;
+    /** Al apagar no se esperan los envios sin ack: siguen PENDIENTE en el outbox y se reintentan. */
+    private static final int CIERRE_SEGUNDOS = 5;
+
+    private final String bootstrapServers;
+
+    public KafkaProducerConfig(@Value("${spring.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers) {
+        this.bootstrapServers = bootstrapServers;
+    }
 
     @Bean
     public ProducerFactory<String, Object> producerFactory() {
@@ -29,7 +36,13 @@ public class KafkaProducerConfig {
         configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         configProps.put(ProducerConfig.RETRIES_CONFIG, 3);
         configProps.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
-        return new DefaultKafkaProducerFactory<>(configProps);
+        configProps.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, TIMEOUT_ENVIO_MS);
+        configProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, TIMEOUT_ENVIO_MS - 1000);
+        configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, TIMEOUT_ENVIO_MS);
+        configProps.put(ProducerConfig.LINGER_MS_CONFIG, 0);
+        DefaultKafkaProducerFactory<String, Object> factory = new DefaultKafkaProducerFactory<>(configProps);
+        factory.setPhysicalCloseTimeout(CIERRE_SEGUNDOS);
+        return factory;
     }
 
     @Bean
