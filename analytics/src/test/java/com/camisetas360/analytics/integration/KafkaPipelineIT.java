@@ -82,7 +82,10 @@ class KafkaPipelineIT {
         }
 
         await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
-            var guardadas = analytics.obtener(USUARIO).orElseThrow();
+            // AssertionError (no NoSuchElementException) para que Awaitility reintente
+            // mientras el consumidor todavia no guarda las recomendaciones.
+            var guardadas = analytics.obtener(USUARIO)
+                    .orElseThrow(() -> new AssertionError("Aun no hay recomendaciones para " + USUARIO));
             assertThat(guardadas.items()).extracting(r -> r.sku()).contains("CHI-VIS");
             assertThat(guardadas.perfil()).containsKey("Selecciones");
         });

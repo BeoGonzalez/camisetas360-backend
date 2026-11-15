@@ -19,8 +19,13 @@
 # Entradas (variables de entorno):
 #   CATALOG             catalogo de servicios de deploy-backend.yml (JSON array)
 #   ECS_CLUSTER         nombre del cluster (ecommerce-cluster)
-#   BACKEND_SUBNET_ID   subred privada 1: NLB, tareas ECS
-#   DATABASE_SUBNET_ID  subred privada 2: instancia de Aurora (otra AZ)
+#   BACKEND_SUBNET_ID   subred privada del NLB y las tareas ECS (necesita salida por NAT)
+#   BACKEND_SECONDARY_SUBNET_ID  (opcional) segunda subred privada del backend, en OTRA AZ: el
+#                       NLB y las tareas ECS usan las dos (tambien necesita salida por NAT).
+#   DATABASE_SUBNET_ID  subred privada de la instancia de Aurora
+#   DATABASE_SECONDARY_SUBNET_ID  (opcional) subred privada de OTRA AZ que completa el grupo
+#                       de subredes de Aurora (RDS exige dos zonas); la instancia se crea en la
+#                       zona de DATABASE_SUBNET_ID. Sin ella, el grupo usa BACKEND_SUBNET_ID.
 #   DB_PASSWORD         contrasena maestra de Aurora (solo al crearla)
 #   DB_NAME, DB_USERNAME, DB_INSTANCE_CLASS, CONNECTIONS_TABLE (opcionales)
 #
@@ -86,9 +91,34 @@ read -r DB_VPC_ID DATABASE_AZ < <(aws ec2 describe-subnets --subnet-ids "${DATAB
   --query 'Subnets[0].[VpcId,AvailabilityZone]' --output text)
 
 [ "${VPC_ID}" = "${DB_VPC_ID}" ] || fail "Las dos subredes deben estar en la misma VPC (${VPC_ID} / ${DB_VPC_ID})."
-[ "${BACKEND_AZ}" != "${DATABASE_AZ}" ] || fail "Aurora exige subredes en dos zonas: BACKEND_SUBNET_ID y DATABASE_SUBNET_ID estan ambas en ${BACKEND_AZ}."
 
-log "Cuenta ${ACCOUNT_ID}, VPC ${VPC_ID}, backend ${BACKEND_SUBNET_ID} (${BACKEND_AZ}), base de datos ${DATABASE_SUBNET_ID} (${DATABASE_AZ})"
+# Subredes del backend (NLB + tareas ECS): una o dos, en zonas distintas.
+BACKEND_SUBNETS=("${BACKEND_SUBNET_ID}")
+BACKEND_ZONES="${BACKEND_AZ}"
+if [ -n "${BACKEND_SECONDARY_SUBNET_ID:-}" ]; then
+  read -r B2_VPC_ID B2_AZ < <(aws ec2 describe-subnets --subnet-ids "${BACKEND_SECONDARY_SUBNET_ID}" \
+    --query 'Subnets[0].[VpcId,AvailabilityZone]' --output text)
+  [ "${B2_VPC_ID}" = "${VPC_ID}" ] || fail "BACKEND_SECONDARY_SUBNET_ID debe estar en la VPC ${VPC_ID} (esta en ${B2_VPC_ID})."
+  [ "${B2_AZ}" != "${BACKEND_AZ}" ] || fail "BACKEND_SECONDARY_SUBNET_ID esta en ${B2_AZ}, la misma zona que BACKEND_SUBNET_ID: el NLB admite una subred por zona."
+  BACKEND_SUBNETS+=("${BACKEND_SECONDARY_SUBNET_ID}")
+  BACKEND_ZONES="${BACKEND_AZ}+${B2_AZ}"
+fi
+BACKEND_SUBNETS_CSV="$(IFS=,; echo "${BACKEND_SUBNETS[*]}")"
+
+# Grupo de subredes de Aurora: la subred de la instancia + una de otra AZ (RDS exige dos zonas).
+# La instancia siempre se crea en DATABASE_AZ.
+DB_PAIR_SUBNET_ID="${DATABASE_SECONDARY_SUBNET_ID:-${BACKEND_SUBNET_ID}}"
+read -r PAIR_VPC_ID PAIR_AZ < <(aws ec2 describe-subnets --subnet-ids "${DB_PAIR_SUBNET_ID}" \
+  --query 'Subnets[0].[VpcId,AvailabilityZone]' --output text)
+[ "${PAIR_VPC_ID}" = "${VPC_ID}" ] || fail "DATABASE_SECONDARY_SUBNET_ID debe estar en la VPC ${VPC_ID} (esta en ${PAIR_VPC_ID})."
+if [ "${PAIR_AZ}" = "${DATABASE_AZ}" ]; then
+  if [ -z "${DATABASE_SECONDARY_SUBNET_ID:-}" ]; then
+    fail "BACKEND_SUBNET_ID y DATABASE_SUBNET_ID estan ambas en ${DATABASE_AZ}: define DATABASE_SECONDARY_SUBNET_ID con una subred privada de otra zona (Aurora exige dos)."
+  fi
+  fail "DATABASE_SECONDARY_SUBNET_ID esta en ${PAIR_AZ}, la misma zona que DATABASE_SUBNET_ID: Aurora exige dos zonas."
+fi
+
+log "Cuenta ${ACCOUNT_ID}, VPC ${VPC_ID}, backend ${BACKEND_SUBNETS_CSV} (${BACKEND_ZONES}), base de datos ${DATABASE_SUBNET_ID} (${DATABASE_AZ}), grupo de Aurora + ${DB_PAIR_SUBNET_ID} (${PAIR_AZ})"
 
 # Filas del catalogo: service kind repository task-family ecs-service container-name port cpu memory
 catalog_rows() {
@@ -231,18 +261,40 @@ NLB_ARN="$(aws elbv2 describe-load-balancers --names "${NLB_NAME}" \
   --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || true)"
 if [ -z "${NLB_ARN}" ] || [ "${NLB_ARN}" = "None" ]; then
   NLB_ARN="$(aws elbv2 create-load-balancer --name "${NLB_NAME}" --type network --scheme internal \
-    --subnets "${BACKEND_SUBNET_ID}" --security-groups "${SG_NLB}" \
+    --subnets "${BACKEND_SUBNETS[@]}" --security-groups "${SG_NLB}" \
     --tags "Key=${TAG_KEY},Value=${TAG_VALUE}" \
     --query 'LoadBalancers[0].LoadBalancerArn' --output text)"
-  log "  + NLB ${NLB_NAME}"
+  log "  + NLB ${NLB_NAME} (${BACKEND_ZONES})"
   aws elbv2 wait load-balancer-available --load-balancer-arns "${NLB_ARN}"
 else
   log "  = NLB ${NLB_NAME}"
+  # Un NLB creado antes con una sola subred: se le agrega la que falte (AWS no permite quitar zonas).
+  CURRENT_NLB_SUBNETS="$(aws elbv2 describe-load-balancers --load-balancer-arns "${NLB_ARN}" \
+    --query 'LoadBalancers[0].AvailabilityZones[].SubnetId' --output text)"
+  MISSING_NLB_SUBNET=0
+  for subnet in "${BACKEND_SUBNETS[@]}"; do
+    case " ${CURRENT_NLB_SUBNETS//$'\t'/ } " in *" ${subnet} "*) ;; *) MISSING_NLB_SUBNET=1 ;; esac
+  done
+  if [ "${MISSING_NLB_SUBNET}" = "1" ]; then
+    mapfile -t NLB_SUBNETS < <(printf '%s\n' ${CURRENT_NLB_SUBNETS} "${BACKEND_SUBNETS[@]}" | sort -u)
+    aws elbv2 set-subnets --load-balancer-arn "${NLB_ARN}" --subnets "${NLB_SUBNETS[@]}" >/dev/null
+    aws elbv2 wait load-balancer-available --load-balancer-arns "${NLB_ARN}"
+    log "  ~ NLB ${NLB_NAME}: subredes ${CURRENT_NLB_SUBNETS//$'\t'/,} -> + ${BACKEND_SUBNETS_CSV}"
+  fi
 fi
+# Cada servicio corre 1 tarea, en una sola de las zonas: sin balanceo entre zonas, el nodo del NLB
+# de la otra zona no tendria destino. Se activa siempre (idempotente).
+aws elbv2 modify-load-balancer-attributes --load-balancer-arn "${NLB_ARN}" \
+  --attributes Key=load_balancing.cross_zone.enabled,Value=true >/dev/null
+log "  = NLB ${NLB_NAME}: balanceo entre zonas activado"
 NLB_DNS="$(aws elbv2 describe-load-balancers --load-balancer-arns "${NLB_ARN}" \
   --query 'LoadBalancers[0].DNSName' --output text)"
 
 declare -A TARGET_GROUPS
+# Readiness (no liveness): el NLB solo envia trafico a una tarea que termino de arrancar, y deja de
+# hacerlo cuando Spring entra en apagado (REFUSING_TRAFFIC). Solo incluye readinessState: una caida
+# de la BD o de un broker no saca la tarea del NLB (los health de dependencias estan desactivados).
+APP_HEALTH_PATH="/actuator/health/readiness"
 while IFS=$'\t' read -r SERVICE KIND _ _ _ _ PORT _ _; do
   TG_NAME="$(target_group_name "${SERVICE}")"
   TG_ARN="$(aws elbv2 describe-target-groups --names "${TG_NAME}" \
@@ -251,7 +303,7 @@ while IFS=$'\t' read -r SERVICE KIND _ _ _ _ PORT _ _; do
     if [ "${KIND}" = "broker" ]; then
       HEALTH=(--health-check-protocol TCP)
     else
-      HEALTH=(--health-check-protocol HTTP --health-check-path /actuator/health/liveness)
+      HEALTH=(--health-check-protocol HTTP --health-check-path "${APP_HEALTH_PATH}")
     fi
     TG_ARN="$(aws elbv2 create-target-group --name "${TG_NAME}" --protocol TCP --port "${PORT}" \
       --vpc-id "${VPC_ID}" --target-type ip "${HEALTH[@]}" \
@@ -265,6 +317,14 @@ while IFS=$'\t' read -r SERVICE KIND _ _ _ _ PORT _ _; do
     log "  + target group ${TG_NAME} (TCP ${PORT})"
   else
     log "  = target group ${TG_NAME}"
+    # Target groups creados antes con /liveness: se corrigen en el lugar (no se recrean).
+    CURRENT_PATH="$(aws elbv2 describe-target-groups --target-group-arns "${TG_ARN}" \
+      --query 'TargetGroups[0].HealthCheckPath' --output text)"
+    if [ "${KIND}" != "broker" ] && [ "${CURRENT_PATH}" != "${APP_HEALTH_PATH}" ]; then
+      aws elbv2 modify-target-group --target-group-arn "${TG_ARN}" \
+        --health-check-path "${APP_HEALTH_PATH}" >/dev/null
+      log "  ~ target group ${TG_NAME}: health check ${CURRENT_PATH} -> ${APP_HEALTH_PATH}"
+    fi
   fi
   TARGET_GROUPS["${SERVICE}"]="${TG_ARN}"
 
@@ -288,8 +348,8 @@ if aws rds describe-db-subnet-groups --db-subnet-group-name "${DB_SUBNET_GROUP}"
   log "  = grupo de subredes ${DB_SUBNET_GROUP}"
 else
   aws rds create-db-subnet-group --db-subnet-group-name "${DB_SUBNET_GROUP}" \
-    --db-subnet-group-description "Aurora de camisetas360 (privada 1 + privada 2)" \
-    --subnet-ids "${BACKEND_SUBNET_ID}" "${DATABASE_SUBNET_ID}" \
+    --db-subnet-group-description "Aurora de camisetas360 (${DATABASE_AZ} + ${PAIR_AZ})" \
+    --subnet-ids "${DATABASE_SUBNET_ID}" "${DB_PAIR_SUBNET_ID}" \
     --tags "Key=${TAG_KEY},Value=${TAG_VALUE}" >/dev/null
   log "  + grupo de subredes ${DB_SUBNET_GROUP}"
 fi
@@ -342,7 +402,7 @@ else
   done
   [ -n "${CLASS}" ] || fail "Ninguna clase de instancia permitida (${DB_INSTANCE_CLASS}, db.t4g.medium, db.t3.medium) sirve para Aurora PostgreSQL ${ENGINE_VERSION}."
 
-  # En la zona de la subred privada 2. Sin monitoreo mejorado ni Performance
+  # En la zona de DATABASE_SUBNET_ID. Sin monitoreo mejorado ni Performance
   # Insights: AWS Academy no permite el rol que necesitan.
   aws rds create-db-instance --db-instance-identifier "${DB_INSTANCE_ID}" \
     --db-cluster-identifier "${DB_CLUSTER_ID}" --engine aurora-postgresql \
@@ -395,11 +455,6 @@ log "== 6/6 ECS: servicios"
 while IFS=$'\t' read -r SERVICE KIND _ TASK_FAMILY ECS_SERVICE CONTAINER PORT _ _; do
   STATUS="$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
     --query 'services[0].status' --output text 2>/dev/null || true)"
-  if [ "${STATUS}" = "ACTIVE" ] || [ "${STATUS}" = "DRAINING" ]; then
-    log "  = servicio ${ECS_SERVICE}"
-    continue
-  fi
-
   if [ "${KIND}" = "broker" ]; then
     SG="${SG_BROKERS}"
     DEPLOYMENT="deploymentCircuitBreaker={enable=true,rollback=true},maximumPercent=100,minimumHealthyPercent=0"
@@ -407,11 +462,29 @@ while IFS=$'\t' read -r SERVICE KIND _ TASK_FAMILY ECS_SERVICE CONTAINER PORT _ 
     SG="${SG_SERVICES}"
     DEPLOYMENT="deploymentCircuitBreaker={enable=true,rollback=true},maximumPercent=200,minimumHealthyPercent=100"
   fi
+  NETWORK="awsvpcConfiguration={subnets=[${BACKEND_SUBNETS_CSV}],securityGroups=[${SG}],assignPublicIp=DISABLED}"
+
+  if [ "${STATUS}" = "ACTIVE" ] || [ "${STATUS}" = "DRAINING" ]; then
+    # Servicios creados antes con otras subredes: se corrigen en el lugar. Si el servicio tiene
+    # tareas, ECS las reemplaza (rolling); en 0 tareas solo cambia la configuracion.
+    CURRENT_SUBNETS="$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+      --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' --output text \
+      | tr '\t' '\n' | sort | paste -sd, -)"
+    WANTED_SUBNETS="$(printf '%s\n' "${BACKEND_SUBNETS[@]}" | sort | paste -sd, -)"
+    if [ "${STATUS}" = "ACTIVE" ] && [ "${CURRENT_SUBNETS}" != "${WANTED_SUBNETS}" ]; then
+      aws ecs update-service --cluster "${ECS_CLUSTER}" --service "${ECS_SERVICE}" \
+        --network-configuration "${NETWORK}" >/dev/null
+      log "  ~ servicio ${ECS_SERVICE}: subredes ${CURRENT_SUBNETS} -> ${WANTED_SUBNETS}"
+    else
+      log "  = servicio ${ECS_SERVICE}"
+    fi
+    continue
+  fi
 
   # 0 tareas: deploy-backend.yml lo sube a 1 con la imagen real.
   retry aws ecs create-service --cluster "${ECS_CLUSTER}" --service-name "${ECS_SERVICE}" \
     --task-definition "${TASK_FAMILY}" --desired-count 0 --launch-type FARGATE \
-    --network-configuration "awsvpcConfiguration={subnets=[${BACKEND_SUBNET_ID}],securityGroups=[${SG}],assignPublicIp=DISABLED}" \
+    --network-configuration "${NETWORK}" \
     --load-balancers "targetGroupArn=${TARGET_GROUPS[${SERVICE}]},containerName=${CONTAINER},containerPort=${PORT}" \
     --health-check-grace-period-seconds 180 \
     --deployment-configuration "${DEPLOYMENT}" \

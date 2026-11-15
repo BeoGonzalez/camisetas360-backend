@@ -2,6 +2,7 @@ package com.camisetas360.pago.exception;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
@@ -35,7 +36,13 @@ public class GlobalExceptionHandler {
         problem.setProperty("tarjetaUltimos4", ex.getTarjetaUltimos4());
         problem.setProperty("intentosDetectados", ex.getIntentos());
         problem.setProperty("ventanaSegundos", ex.getVentanaSegundos());
-        return responder(problem);
+        long segundos = Math.max(1, ex.getSegundosParaReintentar());
+        // El frontend usa estos datos para mantener deshabilitado el boton de pago hasta el desbloqueo.
+        problem.setProperty("segundosParaReintentar", segundos);
+        problem.setProperty("desbloqueoEn", Instant.now().plusSeconds(segundos).toString());
+        return ResponseEntity.status(problem.getStatus())
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(segundos))
+                .body(problem);
     }
 
     @ExceptionHandler(PagoNotFoundException.class)

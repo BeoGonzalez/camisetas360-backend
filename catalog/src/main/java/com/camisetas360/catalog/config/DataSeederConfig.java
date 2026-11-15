@@ -43,6 +43,7 @@ public class DataSeederConfig {
 
                             product.setName("Camiseta " + team + " - " + kitType + " " + season);
                             product.setCategory(league);
+                            product.setLeague(league);
                             product.setSku("FUT-" + faker.code().ean8());
 
                             double price = faker.number().randomDouble(2, 45, 120);

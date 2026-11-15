@@ -1,12 +1,11 @@
 name: Backend CI
 
 on:
+  # Una sola ejecucion por cambio: el PR. Antes tambien corria en cada push a la rama, asi que
+  # una rama con PR abierto ejecutaba el pipeline completo dos veces.
+  # Para probar una rama sin PR: Actions -> Backend CI -> Run workflow (workflow_dispatch).
+  # main lo invoca deploy-backend.yml (workflow_call) antes de desplegar.
   pull_request:
-
-  push:
-    # main invokes this workflow from deploy-backend.yml.
-    branches-ignore:
-      - main
 
   workflow_dispatch:
 
@@ -14,6 +13,12 @@ on:
 
 permissions:
   contents: read
+
+# Un push nuevo al PR cancela la verificacion anterior (ya no sirve). Cuando lo invoca el deploy
+# (github.workflow es el nombre del workflow que llama), nunca se cancela: el deploy depende de el.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.workflow == 'Backend CI' }}
 
 defaults:
   run:
@@ -513,7 +518,7 @@ jobs:
       - services
 
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
 
@@ -556,13 +561,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Los 8 microservicios: el stack de Compose reproduce la topologia de AWS
+          # (PostgreSQL, RabbitMQ, Kafka y DynamoDB).
           for service in \
             auth \
             catalog \
             carrito \
             orders \
             notifications \
-            recommendation
+            recommendation \
+            pagos \
+            analytics
           do
             SOURCE_DIR="verified-jars/jar-${service}"
 
@@ -596,7 +605,7 @@ jobs:
           set -euo pipefail
           python3 tests/compose/verify_postgres_compose.py
 
-      - name: Verify checkout, RabbitMQ, PostgreSQL and SMTP with Compose
+      - name: Verify checkout, RabbitMQ, Kafka, DynamoDB, PostgreSQL and SMTP with Compose
         run: |
           set -euo pipefail
           python3 tests/compose/verify_stack_compose.py

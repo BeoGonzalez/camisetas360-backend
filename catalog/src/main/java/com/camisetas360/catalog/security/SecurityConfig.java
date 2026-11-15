@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
+import org.springframework.boot.security.oauth2.server.resource.autoconfigure.OAuth2ResourceServerProperties;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -23,6 +24,12 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @Configuration
 @Import(JwtValidationConfig.class)
 public class SecurityConfig {
+    private static final String PRODUCTS = "/api/v1/catalog/products";
+    private static final String PRODUCT = PRODUCTS + "/*";
+    private static final String PRODUCT_IMAGE = PRODUCT + "/imagen";
+    static final String MANAGE_CATALOG =
+            "hasAnyRole('CATALOG_MANAGER','ADMIN') and hasAuthority('SCOPE_Catalog.Read')";
+
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         var converter = new JwtAuthenticationConverter();
@@ -33,7 +40,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationConverter converter,
             @Qualifier("corsConfigurationSource") CorsConfigurationSource cors,
-            @Value("${app.cors.enabled:false}") boolean localCors) throws Exception {
+            @Value("${app.cors.enabled:false}") boolean localCors,
+            OAuth2ResourceServerProperties resourceServer) throws Exception {
         http.csrf(csrf -> csrf.disable())
                 .cors(config -> {
                     if (localCors) config.configurationSource(cors);
@@ -47,11 +55,20 @@ public class SecurityConfig {
                                 "/actuator/health/readiness").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**")
-                        .access(new WebExpressionAuthorizationManager(
-                                "hasAnyRole('CUSTOMER','CATALOG_MANAGER','ADMIN') and hasAuthority('SCOPE_Catalog.Read')"))
+                        // Lectura publica: cualquier visitante (sin sesion, Cognito o Entra) ve el catalogo.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
+                        // Administracion del catalogo: solo gestores. Entra no define un scope de escritura
+                        // para el catalogo; la autorizacion la da el rol de aplicacion.
+                        .requestMatchers(HttpMethod.POST, PRODUCTS)
+                        .access(new WebExpressionAuthorizationManager(MANAGE_CATALOG))
+                        .requestMatchers(HttpMethod.PUT, PRODUCT, PRODUCT_IMAGE)
+                        .access(new WebExpressionAuthorizationManager(MANAGE_CATALOG))
+                        .requestMatchers(HttpMethod.DELETE, PRODUCT, PRODUCT_IMAGE)
+                        .access(new WebExpressionAuthorizationManager(MANAGE_CATALOG))
                         .anyRequest().denyAll())
-                .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+                .oauth2ResourceServer(resource -> resource
+                        .bearerTokenResolver(new PublicCatalogBearerTokenResolver(resourceServer.getJwt().getIssuerUri()))
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
         return http.build();
     }
 
@@ -65,7 +82,7 @@ public class SecurityConfig {
         }
         var config = new CorsConfiguration();
         config.setAllowedOriginPatterns(origins);
-        config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept"));
         config.setAllowCredentials(false);
         var result = new UrlBasedCorsConfigurationSource();

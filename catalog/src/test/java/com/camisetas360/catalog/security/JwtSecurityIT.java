@@ -73,10 +73,10 @@ class JwtSecurityIT {
         assertThat(ISSUER.jwksRequests()).isPositive();
     }
 
-    // JWT-CAT-002
+    // JWT-CAT-002: un token de Entra invalido se rechaza aunque la lectura sea publica.
     @ParameterizedTest
     @MethodSource("invalidTokens")
-    void endpoint_shouldReturn401_whenTokenValidationFails(String path, String variant) throws Exception {
+    void endpoint_shouldReturn401_whenEntraTokenValidationFails(String path, String variant) throws Exception {
         mvc.perform(request(path).header("Authorization", "Bearer " + ISSUER.token(SCOPE, variant)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("WWW-Authenticate", org.hamcrest.Matchers.startsWith("Bearer")))
@@ -84,29 +84,46 @@ class JwtSecurityIT {
         verifyNoInteractions(service);
     }
 
+    // JWT-CAT-003: tokens de otro proveedor (Cognito) o ilegibles se ignoran en la lectura publica.
     @ParameterizedTest
-    @MethodSource("protectedPaths")
-    void endpoint_shouldReturn403_whenSignedJwtHasNoRequiredScope(String path) throws Exception {
-        mvc.perform(request(path).header("Authorization", "Bearer " + ISSUER.token("", "valid")))
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"issuer", "malformed"})
+    void publicRead_shouldIgnoreForeignOrMalformedTokens(String variant) throws Exception {
+        when(service.getAllProducts()).thenReturn(List.of());
+        mvc.perform(request(PATH).header("Authorization", "Bearer " + ISSUER.token(SCOPE, variant)))
+                .andExpect(status().isOk());
+    }
+
+    @org.junit.jupiter.api.Test
+    void publicRead_shouldWorkWithoutTokenAndWithoutScope() throws Exception {
+        when(service.getAllProducts()).thenReturn(List.of());
+        mvc.perform(request(PATH)).andExpect(status().isOk());
+        mvc.perform(request(PATH).header("Authorization", "Bearer " + ISSUER.token("", "valid")))
+                .andExpect(status().isOk());
+    }
+
+    @org.junit.jupiter.api.Test
+    void eachConfiguredRoleCanRead() throws Exception {
+        when(service.getAllProducts()).thenReturn(java.util.List.of());
+        for (String role : List.of("CUSTOMER", "ADMIN", "CATALOG_MANAGER")) {
+            String token = ISSUER.token(SCOPE, "role-" + role);
+            assertThat(decoder.decode(token).getClaimAsStringList("roles")).containsExactly(role);
+            mvc.perform(request(PATH).header("Authorization", "Bearer " + token)).andExpect(status().isOk());
+        }
+    }
+
+    // Las escrituras siguen exigiendo un token de Entra valido con rol de gestor.
+    @org.junit.jupiter.api.Test
+    void writes_shouldStillRequireValidEntraManagerToken() throws Exception {
+        mvc.perform(delete(PATH + "/SKU-A")).andExpect(status().isUnauthorized());
+        mvc.perform(delete(PATH + "/SKU-A").header("Authorization", "Bearer " + ISSUER.token(SCOPE, "issuer")))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(delete(PATH + "/SKU-A").header("Authorization", "Bearer " + ISSUER.token(SCOPE, "valid")))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete(PATH + "/SKU-A").header("Authorization", "Bearer " + ISSUER.token(SCOPE, "role-Admin")))
                 .andExpect(status().isForbidden());
         verifyNoInteractions(service);
     }
 
-
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings={"CUSTOMER","ADMIN","CATALOG_MANAGER"})
-    void eachConfiguredRoleWorksWithTheRequiredScope(String role) throws Exception {
-        when(service.getAllProducts()).thenReturn(java.util.List.of());
-        String token=ISSUER.token(SCOPE,"role-"+role);
-        assertThat(decoder.decode(token).getClaimAsStringList("roles")).containsExactly(role);
-        mvc.perform(request(PATH).header("Authorization","Bearer "+token)).andExpect(status().isOk());
-    }
-
-    @org.junit.jupiter.api.Test
-    void titleCaseRoleDoesNotGrantUpperCaseRole() throws Exception {
-        mvc.perform(request(PATH).header("Authorization","Bearer "+ISSUER.token(SCOPE,"role-Customer")))
-                .andExpect(status().isForbidden());
-    }
     @org.junit.jupiter.api.Test
     void productionPreflightIsHandledWithoutBackendCorsHeaders() throws Exception {
         mvc.perform(options(PATH).header("Origin", "https://frontend.example.test")
@@ -123,7 +140,7 @@ class JwtSecurityIT {
     }
 
     static Stream<Arguments> invalidTokens() {
-        return protectedPaths().flatMap(path -> Stream.of("audience", "issuer", "expired", "future-nbf", "missing-exp", "signature", "malformed")
+        return protectedPaths().flatMap(path -> Stream.of("audience", "expired", "future-nbf", "missing-exp", "signature")
                 .map(variant -> Arguments.of(path, variant)));
     }
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Paso 1: crea las dos HTTP API (frontend y backend) con sus rutas, sin integraciones todavia.
+# Paso 1: crea las dos HTTP API (api-camisetas360-frontend y api-camisetas360-backend) con sus rutas,
+# sin integraciones todavia. El CORS del backend permite la URL de la API del frontend y localhost:5173.
 # Ejecutar en AWS CloudShell (us-east-1). Es idempotente: si la API o una ruta ya existe, la reutiliza.
 #
 #   bash 01-api-gateway.sh
@@ -7,16 +8,25 @@
 # Las integraciones (VPC Link -> NLB) y la Lambda autorizadora se agregan en pasos posteriores.
 set -euo pipefail
 
+# El AWS CLI de Windows (Git Bash) termina las lineas con \r: se limpia para comparar ids y rutas.
+aws() { command aws "$@" | tr -d '\r'; }
+
 export AWS_DEFAULT_REGION=us-east-1
-BACKEND_API=camisetas360-backend-api
-FRONTEND_API=camisetas360-frontend-api
-# Origenes permitidos por CORS. Cuando exista la URL del frontend se agrega con el paso de CORS.
-CORS_ORIGINS='["http://localhost:5173"]'
+BACKEND_API=api-camisetas360-backend
+FRONTEND_API=api-camisetas360-frontend
+# Origen local de desarrollo (Vite). La URL de la API del frontend se agrega sola mas abajo.
+LOCAL_ORIGIN='http://localhost:5173'
 
 BACKEND_ROUTES=(
   "GET /api/v1/auth/profile"
   "GET /api/v1/catalog/products"
   "GET /api/v1/catalog/products/{sku}"
+  "POST /api/v1/catalog/products"
+  "PUT /api/v1/catalog/products/{sku}"
+  "DELETE /api/v1/catalog/products/{sku}"
+  "GET /api/v1/catalog/products/{sku}/imagen"
+  "PUT /api/v1/catalog/products/{sku}/imagen"
+  "DELETE /api/v1/catalog/products/{sku}/imagen"
   "GET /api/v1/carrito"
   "POST /api/v1/carrito/items"
   "DELETE /api/v1/carrito/items/{sku}"
@@ -59,6 +69,10 @@ crear_api() {
     echo "API creada: ${nombre} (${id})" >&2
   else
     echo "API existente: ${nombre} (${id})" >&2
+    # Re-ejecutar el script tambien actualiza el CORS (p. ej. si cambio la URL del frontend).
+    if [ -n "${cors}" ]; then
+      aws apigatewayv2 update-api --api-id "${id}" --cors-configuration "${cors}" >/dev/null
+    fi
   fi
   # Etapa $default con despliegue automatico: cada cambio queda publicado sin pasos extra.
   if ! aws apigatewayv2 get-stage --api-id "${id}" --stage-name '$default' >/dev/null 2>&1; then
@@ -81,13 +95,15 @@ crear_rutas() {
   done
 }
 
-CORS_JSON="{\"AllowOrigins\":${CORS_ORIGINS},\"AllowHeaders\":[\"authorization\",\"content-type\"],\"AllowMethods\":[\"GET\",\"POST\",\"PUT\",\"DELETE\",\"OPTIONS\"],\"MaxAge\":300}"
+# Primero el frontend: el CORS del backend necesita su URL (https://<id>.execute-api.<region>.amazonaws.com).
+FRONTEND_ID="$(crear_api "${FRONTEND_API}" "")"
+crear_rutas "${FRONTEND_ID}" "${FRONTEND_ROUTES[@]}"
+FRONTEND_URL="$(aws apigatewayv2 get-api --api-id "${FRONTEND_ID}" --query ApiEndpoint --output text)"
+
+CORS_JSON="{\"AllowOrigins\":[\"${FRONTEND_URL}\",\"${LOCAL_ORIGIN}\"],\"AllowHeaders\":[\"authorization\",\"content-type\"],\"AllowMethods\":[\"GET\",\"POST\",\"PUT\",\"DELETE\",\"OPTIONS\"],\"MaxAge\":300}"
 
 BACKEND_ID="$(crear_api "${BACKEND_API}" "${CORS_JSON}")"
 crear_rutas "${BACKEND_ID}" "${BACKEND_ROUTES[@]}"
-
-FRONTEND_ID="$(crear_api "${FRONTEND_API}" "")"
-crear_rutas "${FRONTEND_ID}" "${FRONTEND_ROUTES[@]}"
 
 echo
 echo "URL backend : $(aws apigatewayv2 get-api --api-id "${BACKEND_ID}" --query ApiEndpoint --output text)"

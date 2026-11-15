@@ -69,6 +69,9 @@ public class CatalogService {
     public ProductDTO getProductDetail(String sku, String usuarioId) {
         Product product = productRepository.findFirstBySkuOrderByIdAsc(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
+        if (usuarioId == null) {
+            return mapToDTO(product); // visitante anonimo: no hay usuario al que atribuir la visita
+        }
 
         eventPublisher.publicar(KafkaTopics.PRODUCTO_VISTO, new InteraccionEvento(
                 UUID.randomUUID(),
@@ -85,17 +88,7 @@ public class CatalogService {
         return mapToDTO(product);
     }
 
-    /**
-     * Método auxiliar privado para transformar la entidad en un DTO.
-     */
     private ProductDTO mapToDTO(Product product) {
-        return new ProductDTO(
-                product.getSku(),
-                product.getName(),
-                product.getCategory(),
-                product.getPrice(),
-                product.getStock(),
-                product.getDescription()
-        );
+        return ProductDTO.from(product);
     }
 }

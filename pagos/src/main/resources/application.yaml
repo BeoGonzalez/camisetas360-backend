@@ -39,8 +39,10 @@ spring:
         spring.json.add.type.headers: false
 
 antifraude:
-  max-intentos: ${ANTIFRAUDE_MAX_INTENTOS:3}
+  max-intentos: ${ANTIFRAUDE_MAX_INTENTOS:2}
   ventana-segundos: ${ANTIFRAUDE_VENTANA_SEGUNDOS:10}
+  # Tras superar el maximo de intentos, la tarjeta queda bloqueada este tiempo (no se alarga con reintentos).
+  bloqueo-minutos: ${ANTIFRAUDE_BLOQUEO_MINUTOS:30}
   secreto-hash: ${ANTIFRAUDE_SECRETO_HASH:dev-antifraude-secret-key-360-supersecreto}
 
 outbox:

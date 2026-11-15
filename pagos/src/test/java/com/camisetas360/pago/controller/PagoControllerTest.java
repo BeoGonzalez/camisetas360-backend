@@ -97,13 +97,14 @@ class PagoControllerTest {
 
                 when(pagoService.iniciarPago(any(IniciarPagoRequest.class))).thenThrow(
                                 new FraudeDetectadoException(
-                                                "Bloqueado preventivamente por antifraude: 4 intentos en ventana de 10 segundos",
+                                                "Bloqueado preventivamente por antifraude: 3 intentos en ventana de 10 segundos",
                                                 ordenId,
                                                 pagoId,
                                                 "hash-dummy",
                                                 "9012",
-                                                4,
-                                                10));
+                                                3,
+                                                10,
+                                                1800));
 
                 mockMvc.perform(post("/api/v1/pago/iniciar")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -115,8 +116,12 @@ class PagoControllerTest {
                                 .andExpect(jsonPath("$.ordenId").value(ordenId.toString()))
                                 .andExpect(jsonPath("$.pagoId").value(pagoId.toString()))
                                 .andExpect(jsonPath("$.tarjetaUltimos4").value("9012"))
-                                .andExpect(jsonPath("$.intentosDetectados").value(4))
-                                .andExpect(jsonPath("$.ventanaSegundos").value(10));
+                                .andExpect(jsonPath("$.intentosDetectados").value(3))
+                                .andExpect(jsonPath("$.ventanaSegundos").value(10))
+                                // El frontend reactiva el boton de pago cuando vence el bloqueo de 30 minutos.
+                                .andExpect(header().string("Retry-After", "1800"))
+                                .andExpect(jsonPath("$.segundosParaReintentar").value(1800))
+                                .andExpect(jsonPath("$.desbloqueoEn").isString());
         }
 
         @Test

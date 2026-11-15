@@ -179,7 +179,7 @@ jobs:
       # AWS_SESSION_TOKEN (AWS Details) en cada sesion nueva.
       # ----------------------------------------------------------
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -234,7 +234,7 @@ jobs:
           persist-credentials: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -246,7 +246,11 @@ jobs:
         env:
           CATALOG: ${{ needs.preflight.outputs.catalog }}
           BACKEND_SUBNET_ID: ${{ vars.BACKEND_SUBNET_ID }}
+          # Opcional: segunda subred privada del backend (otra AZ) para el NLB y las tareas ECS.
+          BACKEND_SECONDARY_SUBNET_ID: ${{ vars.BACKEND_SECONDARY_SUBNET_ID }}
           DATABASE_SUBNET_ID: ${{ vars.DATABASE_SUBNET_ID }}
+          # Opcional: subred de otra AZ que completa el grupo de subredes de Aurora (RDS exige dos zonas).
+          DATABASE_SECONDARY_SUBNET_ID: ${{ vars.DATABASE_SECONDARY_SUBNET_ID }}
           DB_NAME: ${{ vars.DB_NAME || 'ecommerce' }}
           DB_USERNAME: ${{ vars.DB_USERNAME || 'dbadmin' }}
           DB_INSTANCE_CLASS: ${{ vars.DB_INSTANCE_CLASS || 'db.t4g.medium' }}
@@ -292,7 +296,7 @@ jobs:
           persist-credentials: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -301,7 +305,7 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       - name: Download verified JAR
         if: ${{ matrix.kind == 'app' }}
@@ -449,7 +453,7 @@ jobs:
           persist-credentials: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -937,6 +941,65 @@ jobs:
           exit 1
 
       # ----------------------------------------------------------
+      # Smoke test real del despliegue: ECS COMPLETED solo dice que las
+      # tareas arrancaron. Aqui se exige que CADA tarea de la revision
+      # nueva este "healthy" en su target group del NLB, es decir, que
+      # responde /actuator/health/readiness (apps) o acepta TCP (brokers)
+      # por el mismo camino que usa el API Gateway.
+      # ----------------------------------------------------------
+      - name: Verify new tasks are healthy behind the NLB
+        if: ${{ steps.changes.outputs.deploy == 'true' }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          ECS_SERVICE: ${{ matrix.ecs-service }}
+          TASK_DEFINITION_ARN: ${{ steps.register.outputs.arn }}
+        run: |
+          set -euo pipefail
+
+          TG_ARN="$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+            --query 'services[0].loadBalancers[0].targetGroupArn' --output text)"
+          if [ -z "${TG_ARN}" ] || [ "${TG_ARN}" = "None" ]; then
+            echo "::warning::${ECS_SERVICE} no esta registrado en un target group del NLB; no se puede verificar su trafico."
+            exit 0
+          fi
+
+          new_task_ips() {
+            local tasks
+            tasks="$(aws ecs list-tasks --cluster "${ECS_CLUSTER}" --service-name "${ECS_SERVICE}" \
+              --desired-status RUNNING --query 'taskArns' --output text)"
+            [ -z "${tasks}" ] || [ "${tasks}" = "None" ] && return 0
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks ${tasks} --output json \
+              | jq -r --arg td "${TASK_DEFINITION_ARN}" '
+                  .tasks[] | select(.taskDefinitionArn == $td)
+                  | .attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value'
+          }
+
+          DEADLINE=$((SECONDS + 10 * 60))
+          while (( SECONDS < DEADLINE )); do
+            mapfile -t IPS < <(new_task_ips)
+            HEALTH="$(aws elbv2 describe-target-health --target-group-arn "${TG_ARN}" --output json)"
+            PENDING=0
+            for ip in "${IPS[@]}"; do
+              STATE="$(jq -r --arg ip "${ip}" \
+                '[.TargetHealthDescriptions[] | select(.Target.Id == $ip) | .TargetHealth.State][0] // "unregistered"' \
+                <<< "${HEALTH}")"
+              echo "$(date -u +%H:%M:%S) ${SERVICE} ${ip}: ${STATE}"
+              [ "${STATE}" = "healthy" ] || PENDING=1
+            done
+            if [ "${#IPS[@]}" -gt 0 ] && [ "${PENDING}" = "0" ]; then
+              echo "${SERVICE}: ${#IPS[@]} tarea(s) de la revision nueva healthy en el NLB."
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "::error::${SERVICE}: la revision nueva no quedo healthy en el target group del NLB en 10 minutos."
+          jq '.TargetHealthDescriptions[] | {ip: .Target.Id, state: .TargetHealth.State, reason: .TargetHealth.Reason, description: .TargetHealth.Description}' \
+            <<< "${HEALTH}" || true
+          exit 1
+
+      # ----------------------------------------------------------
       # recommendation y analytics no se dan por desplegados si sus
       # tablas de DynamoDB no existen (y, en analytics, si la tabla de
       # productos no tiene el stream que alimenta la telemetria).
@@ -1035,7 +1098,74 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
+    environment:
+      name: production
+
     steps:
+      # ----------------------------------------------------------
+      # deploy-services despliega de a uno y fail-fast: si un servicio
+      # falla, los anteriores ya quedaron en el commit nuevo y los
+      # siguientes en el anterior (el circuit breaker solo revierte el
+      # que fallo). Con DTOs de eventos duplicados eso puede romper
+      # contratos en produccion, asi que se deja visible que version
+      # corre cada servicio, se haya desplegado o no.
+      # ----------------------------------------------------------
+      - name: Configure AWS credentials
+        if: ${{ needs.preflight.result == 'success' }}
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Report running version of every service
+        if: ${{ needs.preflight.result == 'success' }}
+        continue-on-error: true
+        env:
+          CATALOG: ${{ needs.preflight.outputs.catalog }}
+          DEPLOY_RESULT: ${{ needs.deploy-services.result }}
+        run: |
+          set -uo pipefail
+
+          MIXED=0
+          {
+            echo "## Version en ejecucion por servicio"
+            echo
+            echo "Commit de este deploy: \`${GITHUB_SHA::12}\`"
+            echo
+            echo "| Servicio | Imagen en ECS | Tareas | Estado |"
+            echo "|---|---|---|---|"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          while IFS=$'\t' read -r SERVICE KIND ECS_SERVICE; do
+            read -r TASK_DEF RUNNING DESIRED < <(aws ecs describe-services --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --query 'services[0].[taskDefinition, runningCount, desiredCount]' --output text 2>/dev/null \
+              || echo "None 0 0")
+            if [ -z "${TASK_DEF}" ] || [ "${TASK_DEF}" = "None" ]; then
+              echo "| ${SERVICE} | - | - | no existe |" >> "${GITHUB_STEP_SUMMARY}"
+              continue
+            fi
+            IMAGE="$(aws ecs describe-task-definition --task-definition "${TASK_DEF}" \
+              --query 'taskDefinition.containerDefinitions[0].image' --output text)"
+            TAG="${IMAGE##*:}"
+            if [ "${KIND}" = "broker" ]; then
+              STATE="broker (${TAG})"
+            elif [ "${TAG}" = "${GITHUB_SHA}" ]; then
+              STATE="este commit"
+            else
+              STATE="OTRA VERSION"
+              MIXED=1
+            fi
+            echo "| ${SERVICE} | \`${TAG::12}\` | ${RUNNING}/${DESIRED} | ${STATE} |" >> "${GITHUB_STEP_SUMMARY}"
+          done < <(jq -r '.[] | [.service, .kind, ."ecs-service"] | @tsv' <<< "${CATALOG}")
+
+          if [ "${MIXED}" = "1" ]; then
+            echo "::warning::Hay servicios que NO corren el commit ${GITHUB_SHA::12} (deploy-services: ${DEPLOY_RESULT}). Si el cambio toca contratos de eventos, vuelve a ejecutar el deploy completo o revierte los ya desplegados."
+          fi
+
       - name: Require complete deployment success
         env:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
@@ -1059,6 +1189,7 @@ jobs:
           test "${DEPLOY_RESULT}" = "success"
 
       - name: Write deployment summary
+        if: ${{ success() }}
         env:
           SERVICES: ${{ needs.preflight.outputs.services }}
           NLB_DNS: ${{ needs.provision.outputs.nlb_dns }}

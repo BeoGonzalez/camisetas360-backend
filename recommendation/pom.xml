@@ -22,6 +22,9 @@
     <description>Recomendaciones por interacciones (vista, carrito, compra) para Camisetas360</description>
 
     <properties>
+        <!-- Cobertura minima (lineas / ramas) que exige jacoco:check en verify. Subirla junto con los tests. -->
+        <coverage.minimo.lineas>0.91</coverage.minimo.lineas>
+        <coverage.minimo.ramas>0.79</coverage.minimo.ramas>
         <java.version>21</java.version>
         <jacoco.version>0.8.15</jacoco.version>
         <aws.sdk.version>2.31.0</aws.sdk.version>
@@ -264,6 +267,24 @@
                             <dataFile>
                                 ${project.build.directory}/jacoco-merged.exec
                             </dataFile>
+                        </configuration>
+                    </execution>
+                    <!-- Gate de cobertura: CI falla si baja del minimo (umbrales en <properties>). -->
+                    <execution>
+                        <id>coverage-check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                        <configuration>
+                            <dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>${coverage.minimo.lineas}</minimum></limit>
+                                        <limit><counter>BRANCH</counter><value>COVEREDRATIO</value><minimum>${coverage.minimo.ramas}</minimum></limit>
+                                    </limits>
+                                </rule>
+                            </rules>
                         </configuration>
                     </execution>
 

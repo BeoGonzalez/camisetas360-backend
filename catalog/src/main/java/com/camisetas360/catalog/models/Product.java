@@ -2,6 +2,8 @@ package com.camisetas360.catalog.models;
 
 import jakarta.persistence.*;
 
+import java.time.Instant;
+
 /**
  * Entidad que representa un producto (camiseta) en la base de datos.
  */
@@ -17,6 +19,14 @@ public class Product {
     private Double price;
     private Integer stock;
     private String description;
+    private String league;
+    private String team;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "kit_type", length = 20)
+    private KitType kitType;
+    /** Ultima vez que se cambio la foto (version para el front); null = sin foto. */
+    @Column(name = "image_updated_at")
+    private Instant imageUpdatedAt;
 
 
     public Product() {}
@@ -75,5 +85,37 @@ public class Product {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public String getLeague() {
+        return league;
+    }
+
+    public void setLeague(String league) {
+        this.league = league;
+    }
+
+    public String getTeam() {
+        return team;
+    }
+
+    public void setTeam(String team) {
+        this.team = team;
+    }
+
+    public KitType getKitType() {
+        return kitType;
+    }
+
+    public void setKitType(KitType kitType) {
+        this.kitType = kitType;
+    }
+
+    public Instant getImageUpdatedAt() {
+        return imageUpdatedAt;
+    }
+
+    public void setImageUpdatedAt(Instant imageUpdatedAt) {
+        this.imageUpdatedAt = imageUpdatedAt;
     }
 }

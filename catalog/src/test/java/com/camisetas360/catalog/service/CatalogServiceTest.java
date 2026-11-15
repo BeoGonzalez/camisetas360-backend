@@ -52,7 +52,7 @@ class CatalogServiceTest {
                 .thenReturn(Optional.of(product(2L, "SKU-A", "Camiseta roja", "Liga A", 19.5, 8, "Local")));
 
         assertThat(service.getProductDetail("SKU-A", USUARIO))
-                .isEqualTo(new ProductDTO("SKU-A", "Camiseta roja", "Liga A", 19.5, 8, "Local"));
+                .isEqualTo(new ProductDTO("SKU-A", "Camiseta roja", "Liga A", 19.5, 8, "Local", "Premier League"));
 
         var captor = ArgumentCaptor.forClass(InteraccionEvento.class);
         verify(publisher).publicar(eq(KafkaTopics.PRODUCTO_VISTO), captor.capture());
@@ -67,6 +67,16 @@ class CatalogServiceTest {
                 .isEqualTo(new InteraccionEvento.ProductoSnapshot("SKU-A", "Camiseta roja", "Liga A", 19.5));
         assertThat(evento.cantidad()).isNull();
         assertThat(evento.envio()).isNull();
+    }
+
+    // UT-CAT-004b: visitante anonimo (catalogo publico): se devuelve el producto sin registrar la visita.
+    @Test
+    void getProductDetail_shouldNotPublish_whenVisitorIsAnonymous() {
+        when(repository.findFirstBySkuOrderByIdAsc("SKU-A"))
+                .thenReturn(Optional.of(product(2L, "SKU-A", "Camiseta roja", "Liga A", 19.5, 8, "Local")));
+
+        assertThat(service.getProductDetail("SKU-A", null).sku()).isEqualTo("SKU-A");
+        verifyNoInteractions(publisher);
     }
 
     // UT-CAT-005
@@ -88,8 +98,8 @@ class CatalogServiceTest {
         when(repository.findAll()).thenReturn(List.of(first, second));
 
         assertThat(service.getAllProducts()).containsExactly(
-                new ProductDTO("SKU-B", "Camiseta azul", "Liga B", 10.0, 3, null),
-                new ProductDTO("SKU-A", "Camiseta roja", "Liga A", 19.5, 8, "Edición local"));
+                new ProductDTO("SKU-B", "Camiseta azul", "Liga B", 10.0, 3, null, "Premier League"),
+                new ProductDTO("SKU-A", "Camiseta roja", "Liga A", 19.5, 8, "Edición local", "Premier League"));
 
         assertThat(first).usingRecursiveComparison()
                 .isEqualTo(product(8L, "SKU-B", "Camiseta azul", "Liga B", 10.0, 3, null));
@@ -133,8 +143,8 @@ class CatalogServiceTest {
                 .thenReturn(List.of(oldA, b, newA));
 
         assertThat(service.getProductsBySkus(List.of("SKU-A", "SKU-B", "SKU-A", "SKU-X"))).containsExactly(
-                new ProductDTO("SKU-A", "Camiseta roja", "Liga A", 19.5, 8, null),
-                new ProductDTO("SKU-B", "Camiseta azul", "Liga B", 10.0, 3, null));
+                new ProductDTO("SKU-A", "Camiseta roja", "Liga A", 19.5, 8, null, "Premier League"),
+                new ProductDTO("SKU-B", "Camiseta azul", "Liga B", 10.0, 3, null, "Premier League"));
         verifyNoInteractions(publisher);
     }
 
@@ -148,6 +158,7 @@ class CatalogServiceTest {
         product.setPrice(price);
         product.setStock(stock);
         product.setDescription(description);
+        product.setLeague("Premier League");
         return product;
     }
 }

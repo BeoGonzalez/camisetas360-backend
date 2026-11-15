@@ -57,6 +57,8 @@ public class CatalogController {
         if (!SKU.matcher(sku).matches()) {
             return ResponseEntity.badRequest().build();
         }
-        return ResponseEntity.ok(catalogService.getProductDetail(sku, UsuarioAnalitico.desde(jwt)));
+        // Visitante anonimo: se muestra el producto pero no se registra la visita (no hay a quien recomendar).
+        String usuario = jwt == null ? null : UsuarioAnalitico.desde(jwt);
+        return ResponseEntity.ok(catalogService.getProductDetail(sku, usuario));
     }
 }

@@ -111,7 +111,7 @@ class PagoServiceTest {
                 "Juan Perez");
 
         when(fraudeDetector.evaluarTransaccion(anyString(), eq(ordenId)))
-                .thenReturn(new ResultadoEvaluacionFraude(false, 4, 10, "Bloqueado preventivamente por antifraude"));
+                .thenReturn(new ResultadoEvaluacionFraude(false, 3, 10, "Bloqueado preventivamente por antifraude", 1800));
 
         when(pagoRepository.save(any(Pago.class))).thenAnswer(invocation -> {
             Pago p = invocation.getArgument(0);
@@ -123,8 +123,9 @@ class PagoServiceTest {
                 () -> pagoService.iniciarPago(request));
 
         assertEquals(ordenId, ex.getOrdenId());
-        assertEquals(4, ex.getIntentos());
+        assertEquals(3, ex.getIntentos());
         assertEquals(10, ex.getVentanaSegundos());
+        assertEquals(1800, ex.getSegundosParaReintentar(), "El tiempo de desbloqueo llega a la respuesta 429");
         assertEquals("9012", ex.getTarjetaUltimos4());
 
         // Verificar que se guardó la alerta y el evento en Outbox

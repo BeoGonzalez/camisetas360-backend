@@ -39,7 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @Testcontainers
-class PagoIntegrationTest {
+class PagoIntegrationIT {
 
     @Autowired
     private MockMvc mvc;
@@ -82,7 +82,6 @@ class PagoIntegrationTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
-        registry.add("antifraude.max-intentos", () -> 3);
         registry.add("antifraude.ventana-segundos", () -> 10);
     }
 
@@ -155,15 +154,14 @@ class PagoIntegrationTest {
     }
 
     @Test
-    @DisplayName("Regla Antifraude: 3 intentos pasan, el 4.º se bloquea, persiste alerta y evento outbox")
-    void reglaAntifraudeBloqueaCuartoIntento() {
+    @DisplayName("Regla Antifraude (configuracion real): 2 intentos pasan, el 3.º se bloquea 30 min, persiste alerta y evento outbox")
+    void reglaAntifraudeBloqueaTercerIntento() {
         String tarjeta = "4532999988887777";
         UUID orden1 = UUID.randomUUID();
         UUID orden2 = UUID.randomUUID();
         UUID orden3 = UUID.randomUUID();
-        UUID orden4 = UUID.randomUUID();
 
-        // Intentos 1, 2 y 3 deben pasar sin problemas
+        // Intentos 1 y 2 deben pasar sin problemas
         IniciarPagoResponse r1 = pagoService.iniciarPago(new IniciarPagoRequest(
                 orden1, BigDecimal.valueOf(10000), tarjeta, "123", 12, 2026, "Tester"));
         assertEquals("INICIADO", r1.estado());
@@ -172,24 +170,23 @@ class PagoIntegrationTest {
                 orden2, BigDecimal.valueOf(10000), tarjeta, "123", 12, 2026, "Tester"));
         assertEquals("INICIADO", r2.estado());
 
-        IniciarPagoResponse r3 = pagoService.iniciarPago(new IniciarPagoRequest(
-                orden3, BigDecimal.valueOf(10000), tarjeta, "123", 12, 2026, "Tester"));
-        assertEquals("INICIADO", r3.estado());
-
-        // 4.º intento con la misma tarjeta debe ser BLOQUEADO preventivamente
+        // 3.º intento con la misma tarjeta debe ser BLOQUEADO preventivamente
         FraudeDetectadoException ex = assertThrows(FraudeDetectadoException.class, () ->
                 pagoService.iniciarPago(new IniciarPagoRequest(
-                        orden4, BigDecimal.valueOf(10000), tarjeta, "123", 12, 2026, "Tester"))
+                        orden3, BigDecimal.valueOf(10000), tarjeta, "123", 12, 2026, "Tester"))
         );
 
-        assertEquals(orden4, ex.getOrdenId());
-        assertEquals(4, ex.getIntentos());
+        assertEquals(orden3, ex.getOrdenId());
+        assertEquals(3, ex.getIntentos());
         assertEquals("7777", ex.getTarjetaUltimos4());
+        // Configuracion real (antifraude.bloqueo-minutos = 30): la tarjeta queda bloqueada ~30 minutos
+        assertTrue(ex.getSegundosParaReintentar() > 29 * 60 && ex.getSegundosParaReintentar() <= 30 * 60,
+                "Bloqueo de 30 minutos: " + ex.getSegundosParaReintentar());
 
         // Verificar que la alerta se persistió en la tabla alerta_fraude de PostgreSQL
         List<AlertaFraude> alertas = alertaFraudeRepository.findByTarjetaHashOrderByCreatedAtDesc(ex.getTarjetaHash());
         assertFalse(alertas.isEmpty(), "Debe existir registro en alerta_fraude");
-        assertEquals(4, alertas.get(0).getIntentosDetectados());
+        assertEquals(3, alertas.get(0).getIntentosDetectados());
         assertEquals(10, alertas.get(0).getVentanaSegundos());
 
         // Verificar que el pago fue guardado en estado BLOQUEADO_FRAUDE
