@@ -144,9 +144,11 @@ jobs:
           # Contrasena maestra con la que el job provision crea Aurora.
           require DB_PASSWORD "el secret"
 
-          # Las credenciales de las aplicaciones (contrasenas de Aurora y RabbitMQ,
-          # antifraude, SMTP) NO van en el repositorio: se registran a mano en cada
-          # task definition de ECS, y deploy-services verifica que esten.
+          # Las credenciales de las aplicaciones salen de secrets de GitHub y deploy-services
+          # las inyecta en cada task definition: DB_PASSWORD (Aurora), RABBITMQ_PASSWORD,
+          # MAIL_PASSWORD y ANTIFRAUDE_SECRETO_HASH. Un secret sin definir no se inyecta (se
+          # conserva el valor registrado a mano en la task definition, si existe) y
+          # deploy-services corta antes de desplegar si la credencial falta en ambos lados.
 
           # auth con Amazon Cognito: sin estas variables el contenedor fallaria al arrancar (fail-fast).
           if jq -e '.include[] | select(.service == "auth")' <<< "${SERVICES}" >/dev/null; then
@@ -530,10 +532,12 @@ jobs:
       # Configuracion de runtime NO secreta. Cada servicio recibe solo
       # lo que necesita.
       #
-      # Las CREDENCIALES no las inyecta el pipeline: se registran a mano
-      # en cada task definition (consola de ECS) y el render las
-      # conserva, porque solo reemplaza las variables que el mismo
-      # inyecta. El paso siguiente verifica que esten.
+      # Las CREDENCIALES salen de secrets de GitHub (DB_PASSWORD,
+      # RABBITMQ_PASSWORD, MAIL_PASSWORD, ANTIFRAUDE_SECRETO_HASH) y se
+      # inyectan como variables de entorno del contenedor. Un secret
+      # vacio no se inyecta: el render conserva lo que ya tenga la task
+      # definition (valor a mano o "secrets" con valueFrom). El paso
+      # siguiente verifica que no falte ninguna.
       #
       # Aurora: una base compartida (DB_NAME) con un schema por
       # servicio (currentSchema + SPRING_FLYWAY_SCHEMAS), para que
@@ -572,6 +576,11 @@ jobs:
           COGNITO_DEFAULT_ROLE: ${{ vars.COGNITO_DEFAULT_ROLE }}
           COGNITO_USER_INFO_URI: ${{ vars.COGNITO_USER_INFO_URI }}
           COGNITO_USER_INFO_TIMEOUT: ${{ vars.COGNITO_USER_INFO_TIMEOUT }}
+          # Credenciales: jq las lee del entorno ($ENV), no de la linea de comandos.
+          CRED_DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          CRED_RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          CRED_MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          CRED_ANTIFRAUDE_SECRETO_HASH: ${{ secrets.ANTIFRAUDE_SECRETO_HASH }}
         run: |
           set -euo pipefail
 
@@ -613,16 +622,18 @@ jobs:
             --arg region "${AWS_REGION}" \
             '
             def kv($n; $v): {name: $n, value: $v};
+            # Credencial desde un secret de GitHub; vacio = no se inyecta (se conserva la existente).
+            def cred($n; $envName): ($ENV[$envName] // "") as $v | if $v != "" then [kv($n; $v)] else [] end;
 
             (
-              # Brokers: solo su propia configuracion. El usuario y el vhost de RabbitMQ son
-              # los que usan los microservicios (su contrasena, RABBITMQ_DEFAULT_PASS, va a mano);
+              # Brokers: solo su propia configuracion. El usuario, el vhost y la contrasena de
+              # RabbitMQ son los mismos que usan los microservicios;
               # Kafka anuncia la misma direccion (el NLB) que reciben los clientes.
               if $kind == "broker" then
                 (if $service == "rabbitmq" then [
                     kv("RABBITMQ_DEFAULT_USER"; $rabbitUser),
                     kv("RABBITMQ_DEFAULT_VHOST"; $rabbitVhost)
-                  ] else [
+                  ] + cred("RABBITMQ_DEFAULT_PASS"; "CRED_RABBITMQ_PASSWORD") else [
                     kv("KAFKA_ADVERTISED_LISTENERS"; "PLAINTEXT://" + $kafka)
                   ] end)
               else
@@ -635,7 +646,7 @@ jobs:
                   kv("SPRING_DATASOURCE_URL"; $dbUrl),
                   kv("SPRING_FLYWAY_SCHEMAS"; $schema),
                   kv("SPRING_DATASOURCE_USERNAME"; $dbUser)
-                ] else [] end)
+                ] + cred("SPRING_DATASOURCE_PASSWORD"; "CRED_DB_PASSWORD") else [] end)
               + (if ($service | IN("pagos", "catalog", "carrito", "analytics", "recommendation")) then [
                   kv("KAFKA_BOOTSTRAP_SERVERS"; $kafka)
                 ] else [] end)
@@ -646,11 +657,12 @@ jobs:
                   kv("SPRING_RABBITMQ_PORT"; "5672"),
                   kv("SPRING_RABBITMQ_USERNAME"; $rabbitUser),
                   kv("SPRING_RABBITMQ_VIRTUAL_HOST"; $rabbitVhost)
-                ] else [] end)
+                ] + cred("SPRING_RABBITMQ_PASSWORD"; "CRED_RABBITMQ_PASSWORD") else [] end)
               + (if $service == "notifications" then [
                   kv("MAIL_USERNAME"; $mailUser),
                   kv("MAIL_FROM"; $mailFrom)
-                ] else [] end)
+                ] + cred("MAIL_PASSWORD"; "CRED_MAIL_PASSWORD") else [] end)
+              + (if $service == "pagos" then cred("ANTIFRAUDE_SECRETO_HASH"; "CRED_ANTIFRAUDE_SECRETO_HASH") else [] end)
               + (if $service == "carrito" then [
                   kv("CATALOG_BASE_URL"; $catalogUrl)
                 ] else [] end)
@@ -686,7 +698,10 @@ jobs:
                   kv("WEBSOCKET_ALLOWED_ORIGINS"; $frontendOrigin)
                 ] else [] end)
               end
-            ) as $injected
+            ) as $candidates
+            # Una variable que la task definition ya trae como "secrets" (valueFrom) no se duplica.
+            | ([.containerDefinitions[] | select(.name == $container) | (.secrets // [])[].name]) as $fromSecrets
+            | ($candidates | map(select(.name as $n | $fromSecrets | index($n) | not))) as $injected
             | ($injected | map(.name)) as $names
             | del(
                 .taskDefinitionArn,
@@ -706,8 +721,8 @@ jobs:
                 (if $taskMemory != "" then del(.cpu, .memory, .memoryReservation) else . end)
                 | .image = $image
                 | .essential = true
-                # Solo se reemplazan las variables inyectadas; las demas (las credenciales
-                # registradas a mano y cualquier "secrets" con valueFrom) se conservan.
+                # Solo se reemplazan las variables inyectadas; las demas (credenciales
+                # registradas a mano cuyo secret no esta definido, y "secrets" con valueFrom) se conservan.
                 | .environment = (
                     ((.environment // []) | map(select(.name as $n | $names | index($n) | not)))
                     + $injected
@@ -732,7 +747,8 @@ jobs:
             new-task-definition.json
 
       # ----------------------------------------------------------
-      # Las credenciales se registran a mano en la task definition.
+      # Las credenciales vienen de los secrets de GitHub (o, si el
+      # secret no existe, de lo registrado a mano en la task definition).
       # Si falta alguna, se corta aqui (antes de registrar nada) con
       # la lista exacta, en vez de dejar tareas que no arrancan.
       # Acepta la variable en "environment" o como "secrets" (valueFrom).
@@ -772,7 +788,7 @@ jobs:
           done
 
           if [ "${#MISSING[@]}" -gt 0 ]; then
-            echo "::error::Faltan credenciales en ${TASK_FAMILY} (contenedor ${CONTAINER_NAME}): ${MISSING[*]}. Registralas en ECS -> Definiciones de tareas -> ${TASK_FAMILY} -> Crear nueva revision -> contenedor ${CONTAINER_NAME} -> Variables de entorno, y vuelve a ejecutar el workflow."
+            echo "::error::Faltan credenciales en ${TASK_FAMILY} (contenedor ${CONTAINER_NAME}): ${MISSING[*]}. Define el secret de GitHub que corresponde (SPRING_DATASOURCE_PASSWORD <- DB_PASSWORD; SPRING_RABBITMQ_PASSWORD y RABBITMQ_DEFAULT_PASS <- RABBITMQ_PASSWORD; MAIL_PASSWORD; ANTIFRAUDE_SECRETO_HASH) en Settings -> Secrets and variables -> Actions y vuelve a ejecutar el workflow. Tambien sirve registrarlas a mano en la task definition de ECS."
             exit 1
           fi
           echo "Credenciales presentes en ${TASK_FAMILY}: ${REQUIRED[*]}"
