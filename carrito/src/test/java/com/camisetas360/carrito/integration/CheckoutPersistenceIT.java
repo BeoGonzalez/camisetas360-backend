@@ -19,9 +19,16 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import com.camisetas360.carrito.service.CatalogoProductos;
+import com.camisetas360.carrito.service.ProductoCatalogo;
+
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -33,9 +40,17 @@ class CheckoutPersistenceIT extends PostgresTestSupport {
     @Autowired JdbcTemplate jdbc;
     @MockitoBean RabbitTemplate rabbit;
     @MockitoBean JwtDecoder decoder;
+    @MockitoBean CatalogoProductos catalogo;
 
     @BeforeEach void initialize() {
         checkouts.deleteAll();
+        // El catalogo confirma los precios del request (aqui se prueba la persistencia, no la validacion).
+        var precios = Map.of("CAM-Ñ-東京", 19.5, "CAM-002", 10.0, "invalid", 10.0);
+        when(catalogo.buscar(any())).thenAnswer(inv -> {
+            Collection<String> skus = inv.getArgument(0);
+            return skus.stream().filter(precios::containsKey).collect(Collectors.toMap(Function.identity(),
+                    sku -> new ProductoCatalogo(sku, "Producto " + sku, null, precios.get(sku))));
+        });
         var jwt = Jwt.withTokenValue("test").header("alg", "none").subject("buyer")
                 .claim("preferred_username", "buyer@example.test").claim("tid","11111111-1111-1111-1111-111111111111").claim("oid","22222222-2222-2222-2222-222222222222").build();
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
@@ -74,7 +89,7 @@ class CheckoutPersistenceIT extends PostgresTestSupport {
     }
 
     @Test void flywayCreatesTheUuidKeyForeignKeyAndRequiredFields() {
-        assertThat(jdbc.queryForList("SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class)).containsExactly("1","2");
+        assertThat(jdbc.queryForList("SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class)).containsExactly("1","2","3");
         assertThat(jdbc.queryForObject("SELECT data_type FROM information_schema.columns WHERE table_name='checkout_requests' AND column_name='id'", String.class)).isEqualTo("uuid");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO checkout_request_items (checkout_id,sku,quantity,unit_price) VALUES (?, 'missing', 1, 10)", UUID.randomUUID()))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);

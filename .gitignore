@@ -27,7 +27,16 @@ replay_pid*
 
 .env
 .env.*
-!.env.example
 *.secret.yaml
 *.secret.yml
 .vscode
+
+# Pruebas de estres: tokens/claves generados, resultados y JMeter descargado
+tests/stress/data/
+tests/stress/results/
+tests/stress/tools/
+
+# Claude Code skills instalados localmente
+.claude/skills/
+CLAUDE.md
+.claude*

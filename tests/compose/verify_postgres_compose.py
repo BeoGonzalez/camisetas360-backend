@@ -21,7 +21,7 @@ def main():
             assert stack.sql(service, "SELECT id FROM persistence_marker") == "1", "Named volume must survive container replacement"
         (TARGET / "postgres-result.json").write_text(json.dumps({"result": "PASS", "databases": list(SERVICES),
             "wrong_password": "rejected", "cross_network": "blocked", "volume_recreation": "preserved"}), encoding="utf-8")
-        print("PASS: six isolated PostgreSQL databases, credentials and persistent volumes")
+        print("PASS: " + str(len(SERVICES)) + " isolated PostgreSQL databases, credentials and persistent volumes")
     finally:
         stack.close()
 

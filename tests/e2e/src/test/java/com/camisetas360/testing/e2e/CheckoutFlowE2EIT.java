@@ -168,12 +168,16 @@ class CheckoutFlowE2EIT {
                 "spring.security.oauth2.resourceserver.jwt.audiences[0]",
                 TestJwtIssuer.AUDIENCE);
 
+        var catalogStub = register(new TestCatalogStub());
+        var carritoProperties = databaseProperties(common, carritoPostgres);
+        carritoProperties.put("app.catalog.base-url", catalogStub.baseUrl());
+
         carrito = register(
                 new ServiceProcess(
                         root,
                         logs,
                         "carrito",
-                        databaseProperties(common, carritoPostgres)));
+                        carritoProperties));
 
         var orderProperties = new HashMap<>(common);
 

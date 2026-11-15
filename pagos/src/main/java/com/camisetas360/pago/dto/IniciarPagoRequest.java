@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -20,7 +21,8 @@ public record IniciarPagoRequest(
         @NotBlank(message = "El número de tarjeta es obligatorio")
         String numeroTarjeta,
 
-        @NotBlank(message = "El CVV es obligatorio")
+        // Opcional: las tarjetas de débito Redcompra no tienen CVV.
+        @Pattern(regexp = "\\d{3,4}", message = "El CVV debe tener 3 o 4 dígitos")
         String cvv,
 
         @NotNull(message = "El mes de vencimiento es obligatorio")

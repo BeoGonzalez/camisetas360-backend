@@ -116,10 +116,8 @@ y carrito. El perfil production de orders/notifications/carrito exige valores si
 de credenciales de desarrollo. Recommendation los exige en todos los entornos.
 Recommendation necesita su propia base PostgreSQL mediante
 `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`; no usa tablas de orders o notifications.
-El starter Mistral existente necesita su API key en un secret si se activan sus
-modelos. Para ejecutar únicamente la recepción inbox, configurar
-`SPRING_PROFILES_ACTIVE=production,messaging`: este perfil desactiva las cuatro
-autoconfiguraciones de modelos Mistral mientras no exista el worker de IA.
+Cada order.created con tenantId/objectId se registra como interacción COMPRA
+(peso 3) en el Top 5 del comprador.
 
 La factoría de conexiones Spring se reconecta y RabbitAdmin redeclara topology al
 recuperar conexión. Recommendation usa `missing-queues-fatal=false`, heartbeat 30 s

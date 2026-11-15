@@ -20,7 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 })
 @AutoConfigureMockMvc
 @org.springframework.test.context.ActiveProfiles("health-contract")
-class HealthContractTest implements HealthContract, com.camisetas360.testing.security.GatewayCorsContract {
+class HealthContractTest implements HealthContract, com.camisetas360.testing.security.GatewayCorsContract, com.camisetas360.testing.security.ErrorDispatchContract {
  @Autowired MockMvc mvc;
  @Autowired AtomicReference<Health> dependency;
  @MockitoBean JwtDecoder decoder;

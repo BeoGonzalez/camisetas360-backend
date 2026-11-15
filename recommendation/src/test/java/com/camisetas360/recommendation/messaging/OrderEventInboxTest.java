@@ -2,13 +2,16 @@ package com.camisetas360.recommendation.messaging;
 
 import com.camisetas360.recommendation.parser.JsonOrderEventParser;
 import com.camisetas360.recommendation.repository.JdbcOrderInboxRepository;
+import com.camisetas360.recommendation.repository.JdbcInteraccionRepository;
 import com.camisetas360.recommendation.service.DefaultOrderEventInboxService;
+import com.camisetas360.recommendation.service.RecomendacionService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -19,7 +22,9 @@ class OrderEventInboxTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final OrderEventInbox inbox = new DefaultOrderEventInboxService(
             new JsonOrderEventParser(JsonMapper.builder().build()),
-            new JdbcOrderInboxRepository(jdbc)
+            new JdbcOrderInboxRepository(jdbc),
+            new RecomendacionService(new JdbcInteraccionRepository(jdbc)),
+            Clock.systemUTC()
     );
 
     @Test

@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "senior-backend": {
+      "source": "alirezarezvani/claude-skills",
+      "sourceType": "github",
+      "skillPath": "engineering-team/skills/senior-backend/SKILL.md",
+      "computedHash": "017e1e0aed343d9c3b3947c8f4fbcf898c2993efb79b54d89d9153b96ced4b27"
+    }
+  }
+}

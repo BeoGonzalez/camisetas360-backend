@@ -66,6 +66,22 @@ class CartControllerWebMvcTest {
         verifyNoMoreInteractions(service);
     }
 
+    // MVC-CART-010
+    @Test
+    void checkout_shouldReturn422_whenSkuIsNotInCatalog() throws Exception {
+        when(service.createOrder(any())).thenThrow(
+                new com.camisetas360.carrito.service.ProductoNoDisponibleException(List.of("NO-EXISTE")));
+        mvc.perform(request(PATH).with(authorized())).andExpect(status().isUnprocessableContent());
+    }
+
+    // MVC-CART-011
+    @Test
+    void checkout_shouldReturn503_whenCatalogIsUnavailable() throws Exception {
+        when(service.createOrder(any())).thenThrow(
+                new com.camisetas360.carrito.service.CatalogoNoDisponibleException(new RuntimeException("timeout")));
+        mvc.perform(request(PATH).with(authorized())).andExpect(status().isServiceUnavailable());
+    }
+
     // MVC-CART-002
     @ParameterizedTest
     @ValueSource(strings = {"{}", "{\"items\":null}", "{\"items\":[]}"})

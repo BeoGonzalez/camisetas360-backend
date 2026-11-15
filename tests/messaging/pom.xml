@@ -36,6 +36,23 @@
             <artifactId>spring-boot-starter-mail</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- carrito publica eventos de analitica en Kafka (KafkaProducerConfig, InteraccionEventPublisher) -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- pagos serializa PagoEvento con Jackson 2 (JacksonConfig) -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
@@ -44,19 +61,19 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.5.0</version>
+            <version>3.1.1</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.swagger.core.v3</groupId>
             <artifactId>swagger-models-jakarta</artifactId>
-            <version>2.2.21</version>
+            <version>2.2.55</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.swagger.core.v3</groupId>
             <artifactId>swagger-annotations-jakarta</artifactId>
-            <version>2.2.21</version>
+            <version>2.2.55</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -103,6 +120,64 @@
             </testResource>
         </testResources>
         <plugins>
+            <!--
+              Contratos Kafka: catalog, analytics, recommendation y pagos traen dependencias pesadas
+              (TensorFlow, AWS SDK), asi que no se compilan enteros. Se copian SOLO las clases reales
+              del contrato (eventos, topicos, publishers, parsers y el ObjectMapper de pagos).
+              Si una de ellas empieza a depender de algo mas, la compilacion falla aqui a proposito.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>kafka-contract-sources</id>
+                        <phase>generate-test-sources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/generated-test-sources/kafka-contracts</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../catalog/src/main/java</directory>
+                                    <includes>
+                                        <include>com/camisetas360/catalog/messaging/KafkaTopics.java</include>
+                                        <include>com/camisetas360/catalog/messaging/InteraccionEventPublisher.java</include>
+                                        <include>com/camisetas360/catalog/messaging/event/InteraccionEvento.java</include>
+                                    </includes>
+                                </resource>
+                                <resource>
+                                    <directory>${project.basedir}/../../analytics/src/main/java</directory>
+                                    <includes>
+                                        <include>com/camisetas360/analytics/messaging/KafkaTopics.java</include>
+                                        <include>com/camisetas360/analytics/messaging/EventoParser.java</include>
+                                        <include>com/camisetas360/analytics/model/InteraccionEvento.java</include>
+                                        <include>com/camisetas360/analytics/model/AlertaFraude.java</include>
+                                    </includes>
+                                </resource>
+                                <resource>
+                                    <directory>${project.basedir}/../../recommendation/src/main/java</directory>
+                                    <includes>
+                                        <include>com/camisetas360/recommendation/messaging/KafkaTopics.java</include>
+                                        <include>com/camisetas360/recommendation/messaging/InteraccionEvento.java</include>
+                                        <include>com/camisetas360/recommendation/messaging/InteraccionEventoParser.java</include>
+                                        <include>com/camisetas360/recommendation/model/Accion.java</include>
+                                        <include>com/camisetas360/recommendation/model/Interaccion.java</include>
+                                        <include>com/camisetas360/recommendation/model/ProductoFicha.java</include>
+                                    </includes>
+                                </resource>
+                                <resource>
+                                    <directory>${project.basedir}/../../pagos/src/main/java</directory>
+                                    <includes>
+                                        <include>com/camisetas360/pago/messaging/PagoTopicos.java</include>
+                                        <include>com/camisetas360/pago/messaging/PagoEvento.java</include>
+                                        <include>com/camisetas360/pago/config/JacksonConfig.java</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>build-helper-maven-plugin</artifactId>
@@ -116,6 +191,7 @@
                                 <source>${project.basedir}/../../carrito/src/main/java</source>
                                 <source>${project.basedir}/../../orders/src/main/java</source>
                                 <source>${project.basedir}/../../notifications/src/main/java</source>
+                                <source>${project.build.directory}/generated-test-sources/kafka-contracts</source>
                             </sources>
                         </configuration>
                     </execution>

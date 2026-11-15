@@ -31,9 +31,11 @@ class CatalogApplicationTests extends PostgresTestSupport {
     @Test
     void contextLoads() {
         assertThat(context.getBean(CatalogController.class)).isNotNull();
-        // Real data.sql and real startup runner: the seed must remain the three SQL products.
+        // Real Flyway seed and real startup runner: the 3 V2 products plus the 60 Premier League kits of V3
+        // (the Datafaker runner must not add anything on top).
         assertThat(context.getBean(ProductRepository.class).findAll())
                 .extracting(Product::getSku)
-                .containsExactlyInAnyOrder("CAM-001", "CAM-002", "CAM-003");
+                .hasSize(63)
+                .contains("CAM-001", "CAM-002", "CAM-003", "PL-ARS-LOC-2627", "PL-TOT-ALT-2627");
     }
 }

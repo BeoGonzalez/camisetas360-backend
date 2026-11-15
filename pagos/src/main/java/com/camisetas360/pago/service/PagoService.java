@@ -114,7 +114,8 @@ public class PagoService {
                     tarjetaHash,
                     ultimos4,
                     evaluacion.intentosEnVentana(),
-                    evaluacion.ventanaSegundos()
+                    evaluacion.ventanaSegundos(),
+                    evaluacion.segundosParaReintentar()
             );
         }
 

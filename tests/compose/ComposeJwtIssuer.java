@@ -38,9 +38,11 @@ public final class ComposeJwtIssuer {
             String email = "compose-buyer@example.test";
             var metadata = Map.of("issuer", issuer, "jwks", base + "/jwks",
                     "audience", "camisetas360-compose-qa", "email", email,
-                    "ownerToken", token(key, issuer, email, true),
-                    "foreignToken", token(key, issuer, "compose-other@example.test", true),
-                    "missingSubjectToken", token(key, issuer, email, false));
+                    "ownerToken", token(key, issuer, email, true, "CUSTOMER"),
+                    "foreignToken", token(key, issuer, "compose-other@example.test", true, "CUSTOMER"),
+                    "missingSubjectToken", token(key, issuer, email, false, "CUSTOMER"),
+                    // Dashboard de analytics (metricas y alertas de fraude): ADMIN + Catalog.Read.
+                    "adminToken", token(key, issuer, "compose-admin@example.test", true, "ADMIN"));
             Files.writeString(Path.of(args[0]), JsonMapper.builder().build().writeValueAsString(metadata));
             System.in.read(); // Parent closes stdin when the isolated test finishes.
         } finally {
@@ -48,14 +50,15 @@ public final class ComposeJwtIssuer {
         }
     }
 
-    private static String token(RSAKey key, String issuer, String email, boolean includeSubject) throws Exception {
+    private static String token(RSAKey key, String issuer, String email, boolean includeSubject, String role)
+            throws Exception {
         Instant now = Instant.now();
         var claims = new JWTClaimsSet.Builder().issuer(issuer).audience("camisetas360-compose-qa")
                 .subject(includeSubject ? email : null).claim("preferred_username", email).claim("name", "Compose QA Buyer")
                 .claim("oid", java.util.UUID.nameUUIDFromBytes(email.getBytes(StandardCharsets.UTF_8)).toString())
                 .claim("tid", "11111111-1111-1111-1111-111111111111")
                 .claim("scp", "Checkout.Create Orders.Read Profile.Read Catalog.Read")
-                .claim("roles", List.of("CUSTOMER"))
+                .claim("roles", List.of(role))
                 .issueTime(Date.from(now)).notBeforeTime(Date.from(now.minusSeconds(30)))
                 .expirationTime(Date.from(now.plusSeconds(3600))).build();
         var jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(key.getKeyID()).build(), claims);

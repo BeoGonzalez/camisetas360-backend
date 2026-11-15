@@ -44,7 +44,7 @@ Flyway agrega tenant_id/object_id nullable con CHECK de ambos presentes o ambos 
 
 Los eventos checkout.requested y order.created conservan email de contacto y añaden tenantId/objectId. No contienen JWT, access token ni secretos. Los payloads antiguos se deserializan con IDs null; orders los rechaza hacia DLQ. La queue clásica existente tiene dead-lettering de mejor esfuerzo: respaldar/drenar eventos durante el rollout y vigilar DLQ, no asumir entrega exactamente una vez ni garantía quorum sin migración aparte. Los consumidores deben tolerar redelivery.
 
-RabbitMQ OSS permanece privado en ECS sobre EC2. Se conserva `camisetas360.orders` y queues independientes de notifications/recommendation. No se sustituye por Amazon MQ/SQS/SNS/EventBridge. Recommendation sigue como worker privado sin Resource Server ni endpoint de negocio.
+RabbitMQ OSS permanece privado en ECS sobre EC2. Se conserva `camisetas360.orders` y queues independientes de notifications/recommendation. No se sustituye por Amazon MQ/SQS/SNS/EventBridge. Recommendation es Resource Server: expone solo `GET /api/v1/recomendaciones` (rol CUSTOMER + scope Catalog.Read), con el usuario tomado de tid/oid del token.
 
 ## Health y reinicios
 
@@ -53,12 +53,12 @@ Todos los servicios exponen sin JWT únicamente:
 | Path | Uso | Dependencias |
 |---|---|---|
 | GET /actuator/health | ALB, 200 cuando proceso y DB están sanos | agregación; Rabbit/SMTP excluidos |
-| GET /actuator/health/liveness | ECS container health | livenessState, sin DB/Rabbit/SMTP/Mistral |
+| GET /actuator/health/liveness | ECS container health | livenessState, sin DB/Rabbit/SMTP/Kafka |
 | GET /actuator/health/readiness | disponibilidad operacional | readinessState + DB |
 
-Health usa show-details=never y show-components=never. No se publican env/info/beans. Evitar enrutar Actuator por el gateway público. La caída breve de RabbitMQ, SMTP o Mistral no afecta a liveness ni health por esos indicadores. Recuperación AMQP usa reconnect del cliente; orders y recommendation tienen missing-queues-fatal=false y retries acotados. Un fallo real de DB sí afecta readiness y el agregado.
+Health usa show-details=never y show-components=never. No se publican env/info/beans. Evitar enrutar Actuator por el gateway público. La caída breve de RabbitMQ, Kafka o SMTP no afecta a liveness ni health por esos indicadores. Recuperación AMQP usa reconnect del cliente; orders y recommendation tienen missing-queues-fatal=false y retries acotados. Un fallo real de DB sí afecta readiness y el agregado.
 
-AWS ECS puede reemplazar tasks marcadas unhealthy por ALB; evaluar este comportamiento si se usa agregado/readiness durante una caída prolongada de DB. Configurar container health con liveness, grace period y circuit breaker, y evaluar un target-group path de liveness si se necesita evitar reemplazos por DB. No convertir checks de SMTP/Mistral/Rabbit en liveness. Supervisar esas dependencias por métricas, backlog/DLQ y alarmas privadas.
+AWS ECS puede reemplazar tasks marcadas unhealthy por ALB; evaluar este comportamiento si se usa agregado/readiness durante una caída prolongada de DB. Configurar container health con liveness, grace period y circuit breaker, y evaluar un target-group path de liveness si se necesita evitar reemplazos por DB. No convertir checks de SMTP/Kafka/Rabbit en liveness. Supervisar esas dependencias por métricas, backlog/DLQ y alarmas privadas.
 
 ## CORS
 
@@ -85,8 +85,8 @@ No se dispone de acceso validado al portal/manifiesto real. El repositorio conti
 
 - [ ] API Gateway → VPC Link → ALB interno → ECS EC2 y subnets privadas, sin public IP para workers/broker.
 - [ ] Target Groups de auth/catalog/carrito/orders/notifications: GET /actuator/health, HTTP 200 sin Authorization; comprobar healthy y grace period.
-- [ ] Recommendation: health privado en su task/target operativo si existe, sin ruta pública /api/v1/recommendations. No añadir un ALB público para el worker.
-- [ ] Container health de los seis servicios: /actuator/health/liveness. Parar temporalmente Rabbit/SMTP/Mistral y confirmar que el proceso sano no entra en bucle de reemplazo; reconexión y backlog deben recuperarse.
+- [ ] Recommendation: publicar solo GET /api/v1/recomendaciones en el API Gateway; health sigue siendo privado.
+- [ ] Container health de los seis servicios: /actuator/health/liveness. Parar temporalmente Rabbit/Kafka/SMTP y confirmar que el proceso sano no entra en bucle de reemplazo; reconexión y backlog deben recuperarse.
 - [ ] Actuator no publica detalles ni endpoints sensibles por Gateway; endpoints de negocio sin token 401, sin scope/rol 403.
 - [ ] Gateway CORS: origen frontend real, preflight sin JWT, headers Authorization/Content-Type/Accept y errores consistentes; sin políticas Spring contradictorias.
 - [ ] SG: AMQP5672 solo desde SG de productores/consumidores autorizados; management15672 solo operación privada, nunca 0.0.0.0/0. Credenciales desde Secrets Manager/configuración segura.

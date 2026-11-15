@@ -15,7 +15,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -57,8 +56,7 @@ class PagoServiceTest {
                 fraudeDetector,
                 pasarelaPagoPort,
                 outboxService,
-                SECRETO
-        );
+                SECRETO);
     }
 
     @Test
@@ -72,8 +70,7 @@ class PagoServiceTest {
                 "123",
                 12,
                 2026,
-                "Juan Perez"
-        );
+                "Juan Perez");
 
         when(fraudeDetector.evaluarTransaccion(anyString(), eq(ordenId)))
                 .thenReturn(new ResultadoEvaluacionFraude(true, 1, 10, "OK"));
@@ -111,11 +108,10 @@ class PagoServiceTest {
                 "123",
                 12,
                 2026,
-                "Juan Perez"
-        );
+                "Juan Perez");
 
         when(fraudeDetector.evaluarTransaccion(anyString(), eq(ordenId)))
-                .thenReturn(new ResultadoEvaluacionFraude(false, 4, 10, "Bloqueado preventivamente por antifraude"));
+                .thenReturn(new ResultadoEvaluacionFraude(false, 3, 10, "Bloqueado preventivamente por antifraude", 1800));
 
         when(pagoRepository.save(any(Pago.class))).thenAnswer(invocation -> {
             Pago p = invocation.getArgument(0);
@@ -123,11 +119,13 @@ class PagoServiceTest {
             return p;
         });
 
-        FraudeDetectadoException ex = assertThrows(FraudeDetectadoException.class, () -> pagoService.iniciarPago(request));
+        FraudeDetectadoException ex = assertThrows(FraudeDetectadoException.class,
+                () -> pagoService.iniciarPago(request));
 
         assertEquals(ordenId, ex.getOrdenId());
-        assertEquals(4, ex.getIntentos());
+        assertEquals(3, ex.getIntentos());
         assertEquals(10, ex.getVentanaSegundos());
+        assertEquals(1800, ex.getSegundosParaReintentar(), "El tiempo de desbloqueo llega a la respuesta 429");
         assertEquals("9012", ex.getTarjetaUltimos4());
 
         // Verificar que se guardó la alerta y el evento en Outbox

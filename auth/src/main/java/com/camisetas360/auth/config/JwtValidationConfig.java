@@ -20,6 +20,8 @@ import org.springframework.security.oauth2.jwt.SupplierJwtDecoder;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(OAuth2ResourceServerProperties.class)
 public class JwtValidationConfig {
+
+    /** Decoder de Microsoft Entra ID: unico bean {@link JwtDecoder} del contexto. */
     @Bean
     public JwtDecoder jwtDecoder(OAuth2ResourceServerProperties properties) {
         var settings = properties.getJwt();
@@ -28,20 +30,27 @@ public class JwtValidationConfig {
         if (issuer == null || issuer.isBlank() || audiences == null || audiences.isEmpty()) {
             throw new IllegalStateException("Issuer and API audience must be configured");
         }
+        return lazyDecoder(issuer, settings.getJwkSetUri(), List.of(new JwtClaimValidator<List<String>>("aud",
+                aud -> aud != null && aud.stream().anyMatch(audiences::contains))));
+    }
 
-        // Discovery/JWKS availability must not prevent startup or unauthenticated health checks.
+    /**
+     * Decoder perezoso compartido por todos los issuers de confianza: valida firma con el JWKS del issuer,
+     * {@code iss} exacto, {@code exp} obligatorio, {@code nbf} y los validadores propios del proveedor.
+     * Discovery/JWKS no disponibles no impiden el arranque ni los health checks no autenticados.
+     */
+    static JwtDecoder lazyDecoder(String issuer, String jwkSetUri, List<OAuth2TokenValidator<Jwt>> providerValidators) {
         return new SupplierJwtDecoder(() -> {
             // An explicit JWKS URL supports local signed-token tests without weakening issuer validation.
-            NimbusJwtDecoder decoder = settings.getJwkSetUri() != null && !settings.getJwkSetUri().isBlank()
-                    ? NimbusJwtDecoder.withJwkSetUri(settings.getJwkSetUri()).build()
+            NimbusJwtDecoder decoder = jwkSetUri != null && !jwkSetUri.isBlank()
+                    ? NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build()
                     : (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(issuer);
             var timestamp = new JwtTimestampValidator();
-            timestamp.setAllowEmptyExpiryClaim(false); // Normal Entra access tokens contain exp.
+            timestamp.setAllowEmptyExpiryClaim(false); // Entra and Cognito access tokens always contain exp.
             var validators = new ArrayList<OAuth2TokenValidator<Jwt>>();
             validators.add(JwtValidators.createDefaultWithIssuer(issuer));
             validators.add(timestamp);
-            validators.add(new JwtClaimValidator<List<String>>("aud",
-                    aud -> aud != null && aud.stream().anyMatch(audiences::contains)));
+            validators.addAll(providerValidators);
             decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(validators));
             return decoder;
         });

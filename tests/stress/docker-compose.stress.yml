@@ -1,0 +1,37 @@
+﻿# SOLO PRUEBAS DE ESTRES LOCALES. Reemplaza Entra ID por un emisor JWT de prueba (clave local).
+# Restaurar con: docker compose up -d  (sin este archivo)
+x-stress-jwt: &stress-jwt
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: https://stress.camisetas360.local/v2.0
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_AUDIENCES: camisetas360-stress
+  SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://jwks-stress/jwks.json
+
+services:
+  jwks-stress:
+    image: camisetas360-local-frontend
+    container_name: jwks-stress
+    volumes:
+      - ./tests/stress/data/jwks.json:/usr/share/nginx/html/jwks.json:ro
+    networks:
+      - app-network
+
+  auth:
+    environment: *stress-jwt
+    depends_on: [jwks-stress]
+  catalog:
+    environment: *stress-jwt
+    depends_on: [jwks-stress]
+  carrito:
+    environment: *stress-jwt
+    depends_on: [jwks-stress]
+  orders:
+    environment: *stress-jwt
+    depends_on: [jwks-stress]
+  notifications:
+    environment: *stress-jwt
+    depends_on: [jwks-stress]
+  analytics:
+    environment: *stress-jwt
+    depends_on: [jwks-stress]
+  recommendation:
+    environment: *stress-jwt
+    depends_on: [jwks-stress]

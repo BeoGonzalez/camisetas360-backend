@@ -1,20 +1,24 @@
 package com.camisetas360.recommendation.parser;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Immutable record representing the validated, parsed order event contract.
+ * Evento order.created validado.
+ *
+ * @param usuarioId {@code <tid>:<oid>} del comprador, o null en payloads legacy sin propietario
+ *                  (nunca se infiere desde el email)
+ * @param lineas    productos comprados
  */
 public record ParsedOrderEvent(
         UUID eventId,
         long orderId,
-        int itemCount,
-        String userEmail,
-        List<String> items
+        String usuarioId,
+        List<Linea> lineas,
+        Instant occurredAt
 ) {
-    public ParsedOrderEvent(UUID eventId, long orderId, int itemCount) {
-        this(eventId, orderId, itemCount, null, List.of());
+    public record Linea(String sku, int quantity, Double unitPrice) {
     }
 
     public ParsedOrderEvent {
@@ -24,10 +28,9 @@ public record ParsedOrderEvent(
         if (orderId <= 0) {
             throw new IllegalArgumentException("orderId must be positive");
         }
-        if (itemCount <= 0) {
-            throw new IllegalArgumentException("itemCount must be positive");
+        if (lineas == null || lineas.isEmpty()) {
+            throw new IllegalArgumentException("lineas cannot be empty");
         }
-        items = items != null ? List.copyOf(items) : List.of();
+        lineas = List.copyOf(lineas);
     }
 }
-

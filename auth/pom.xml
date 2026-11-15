@@ -27,6 +27,9 @@
 		<url/>
 	</scm>
 	<properties>
+		<!-- Cobertura minima (lineas / ramas) que exige jacoco:check en verify. Subirla junto con los tests. -->
+		<coverage.minimo.lineas>0.94</coverage.minimo.lineas>
+		<coverage.minimo.ramas>0.84</coverage.minimo.ramas>
 		<java.version>21</java.version>
 	</properties>
 	<dependencies>
@@ -45,17 +48,17 @@
 		<dependency>
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-			<version>2.5.0</version>
+			<version>3.1.1</version>
 		</dependency>
 		<dependency>
 			<groupId>io.swagger.core.v3</groupId>
 			<artifactId>swagger-models-jakarta</artifactId>
-			<version>2.2.21</version>
+			<version>2.2.55</version>
 		</dependency>
 		<dependency>
 			<groupId>io.swagger.core.v3</groupId>
 			<artifactId>swagger-annotations-jakarta</artifactId>
-			<version>2.2.21</version>
+			<version>2.2.55</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -168,6 +171,24 @@
 						<configuration>
 							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
 							<title>${project.artifactId} - Surefire + Failsafe</title>
+						</configuration>
+					</execution>
+					<!-- Gate de cobertura: CI falla si baja del minimo (umbrales en <properties>). -->
+					<execution>
+						<id>coverage-check</id>
+						<phase>verify</phase>
+						<goals><goal>check</goal></goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+							<rules>
+								<rule>
+									<element>BUNDLE</element>
+									<limits>
+										<limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>${coverage.minimo.lineas}</minimum></limit>
+										<limit><counter>BRANCH</counter><value>COVEREDRATIO</value><minimum>${coverage.minimo.ramas}</minimum></limit>
+									</limits>
+								</rule>
+							</rules>
 						</configuration>
 					</execution>
 				</executions>

@@ -25,4 +25,18 @@ public interface HealthContract {
                     .andExpect(jsonPath("$.components").doesNotExist());
         } finally { dependency().set(Health.up().build()); }
     }
+    /**
+     * El health check del target group del NLB en AWS es /actuator/health/readiness: debe ser publico,
+     * sin detalles y no depender de la BD ni de los brokers (si no, una caida saca todas las tareas).
+     */
+    @Test default void readinessIsPublicAndIgnoresDependencies() throws Exception {
+        dependency().set(Health.down().withDetail("secret", "never-public").build());
+        try {
+            mvc().perform(get("/actuator/health/readiness")).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("UP"))
+                    .andExpect(jsonPath("$.details").doesNotExist())
+                    .andExpect(jsonPath("$.components").doesNotExist())
+                    .andExpect(header().doesNotExist("WWW-Authenticate"));
+        } finally { dependency().set(Health.up().build()); }
+    }
 }

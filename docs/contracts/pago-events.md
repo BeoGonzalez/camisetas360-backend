@@ -176,6 +176,15 @@ Todos los eventos cumplen con la estructura unificada `PagoEvento`:
   "estado": "BLOQUEADO_FRAUDE",
   "tarjetaHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "ultimos4": "9012",
-  "motivo": "Bloqueado preventivamente por antifraude: 4 intentos en ventana de 10 segundos (máximo permitido: 3)"
+  "motivo": "Bloqueado preventivamente por antifraude: 3 intentos en ventana de 10 segundos (máximo permitido: 2). Tarjeta bloqueada 30 minutos, hasta 2026-11-08T23:02:05.101Z"
 }
 ```
+
+Se permiten `ANTIFRAUDE_MAX_INTENTOS` (2 por defecto) intentos por tarjeta en `ANTIFRAUDE_VENTANA_SEGUNDOS` (10);
+el siguiente (el 3.º) dispara el bloqueo. Tras el bloqueo, la tarjeta queda rechazada durante `ANTIFRAUDE_BLOQUEO_MINUTOS` (30 por defecto) desde el
+intento que lo disparó; los reintentos no lo alargan. Cada reintento bloqueado vuelve a emitir este evento con
+`motivo` = `Tarjeta bloqueada por antifraude hasta <instante> (faltan N segundos)`.
+
+La respuesta HTTP `429` de `POST /api/v1/pago/iniciar` incluye el header `Retry-After: <segundos>` y, en el
+cuerpo, `segundosParaReintentar` y `desbloqueoEn` (ISO-8601), para que el frontend mantenga deshabilitado el
+botón de pago hasta el desbloqueo.

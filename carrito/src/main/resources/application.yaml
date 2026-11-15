@@ -67,3 +67,11 @@ management:
 app:
   cors:
     enabled: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  analytics:
+    events-enabled: ${ANALYTICS_EVENTS_ENABLED:true}
+  catalog:
+    # Fuente de verdad de precios: carrito nunca usa el precio enviado por el cliente.
+    base-url: ${CATALOG_BASE_URL:http://localhost:8081}
+    timeout: ${CATALOG_TIMEOUT:2s}

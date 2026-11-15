@@ -51,6 +51,7 @@ class ProductRepositoryTest extends PostgresTestSupport {
         assertThat(reloaded.getPrice()).isEqualTo(19.5);
         assertThat(reloaded.getStock()).isEqualTo(12);
         assertThat(reloaded.getDescription()).isEqualTo("Temporada 2026");
+        assertThat(reloaded.getLeague()).isEqualTo("Premier League");
     }
 
     // JPA-CAT-002
@@ -82,6 +83,7 @@ class ProductRepositoryTest extends PostgresTestSupport {
         product.setPrice(price);
         product.setStock(stock);
         product.setDescription("Temporada 2026");
+        product.setLeague("Premier League");
         return product;
     }
 }
