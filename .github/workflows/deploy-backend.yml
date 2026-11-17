@@ -197,6 +197,57 @@ jobs:
             exit 1
           fi
 
+      # ----------------------------------------------------------
+      # Mismo chequeo que "Verify credentials registered in the task
+      # definition" de deploy-services, pero antes de los tests y builds:
+      # si el secret de GitHub esta vacio, la credencial debe existir ya
+      # (a mano o como "secrets" valueFrom) en la task definition actual.
+      # ----------------------------------------------------------
+      - name: Verify application credentials
+        env:
+          SERVICES: ${{ steps.catalog.outputs.services }}
+          CRED_RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          CRED_MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          CRED_ANTIFRAUDE_SECRETO_HASH: ${{ secrets.ANTIFRAUDE_SECRETO_HASH }}
+        run: |
+          set -euo pipefail
+          FAILED=0
+
+          # Imprime "VARIABLE_CONTENEDOR SECRET_GITHUB" por cada credencial que necesita el servicio.
+          # (DB_PASSWORD ya es obligatorio en el paso de validacion de secrets.)
+          required() {
+            case "$1" in
+              rabbitmq) echo "RABBITMQ_DEFAULT_PASS RABBITMQ_PASSWORD" ;;
+              carrito|orders|recommendation) echo "SPRING_RABBITMQ_PASSWORD RABBITMQ_PASSWORD" ;;
+              notifications) echo "SPRING_RABBITMQ_PASSWORD RABBITMQ_PASSWORD"; echo "MAIL_PASSWORD MAIL_PASSWORD" ;;
+              pagos) echo "ANTIFRAUDE_SECRETO_HASH ANTIFRAUDE_SECRETO_HASH" ;;
+            esac
+          }
+
+          while read -r service family container; do
+            while read -r var secret; do
+              [ -z "${var}" ] && continue
+              cred_env="CRED_${secret}"
+              [ -n "${!cred_env:-}" ] && continue
+
+              if aws ecs describe-task-definition --task-definition "${family}" \
+                   --query 'taskDefinition' --output json > td.json 2>/dev/null \
+                 && jq -e --arg c "${container}" --arg n "${var}" '
+                      .containerDefinitions[] | select(.name == $c)
+                      | ([(.environment // [])[] | select(.name == $n and (.value // "") != "")]
+                         + [(.secrets // [])[] | select(.name == $n)]) | length > 0
+                    ' td.json >/dev/null; then
+                echo "${service}: ${var} no viene de GitHub; se conserva el valor de ${family}."
+              else
+                echo "::error::Falta el secret de GitHub ${secret} (environment 'production' o del repositorio) y ${family} no tiene ${var} registrado. ${service} no podria arrancar."
+                FAILED=1
+              fi
+            done < <(required "${service}")
+          done < <(jq -r '.include[] | "\(.service) \(.["task-family"]) \(.["container-name"])"' <<< "${SERVICES}")
+
+          rm -f td.json
+          exit "${FAILED}"
+
   # ============================================================
   # 1. Execute the complete backend CI before deployment
   # ============================================================
