@@ -27,7 +27,7 @@ class StompJwtChannelInterceptorTest {
     private static final LocalJwtIssuer ISSUER = new LocalJwtIssuer();
     private static final MessageChannel CHANNEL = mock(MessageChannel.class);
 
-    private final StompJwtChannelInterceptor interceptor = new StompJwtChannelInterceptor(decoder());
+    private final StompJwtChannelInterceptor interceptor = new StompJwtChannelInterceptor(decoder(), ISSUER.issuer());
 
     @AfterAll
     static void stop() {

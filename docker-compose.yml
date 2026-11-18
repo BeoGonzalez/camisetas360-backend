@@ -256,6 +256,7 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic carrito.item-agregado --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic carrito.item-eliminado --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic carrito.envio-actualizado --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetria.productos-actualizados --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic recommendation.interacciones.dlt --partitions 3 --replication-factor 1
         echo "Tópicos disponibles en Kafka:"
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
@@ -347,6 +348,11 @@ services:
       SPRING_DATASOURCE_USERNAME: ${CATALOG_POSTGRES_USER:?Define CATALOG_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${CATALOG_POSTGRES_PASSWORD:?Define CATALOG_POSTGRES_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Administradores de Cognito (grupos CATALOG_MANAGER/ADMIN) gestionan productos; mismo pool que auth.
+      COGNITO_ENABLED: ${COGNITO_ENABLED:-false}
+      COGNITO_ISSUER_URI: ${COGNITO_ISSUER_URI:-}
+      COGNITO_JWK_SET_URI: ${COGNITO_JWK_SET_URI:-}
+      COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s

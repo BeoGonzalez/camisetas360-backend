@@ -26,8 +26,12 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ConsumerFactory<String, String> consumerFactory(
-            @Value("${app.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers) {
+            @Value("${app.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers,
+            @Value("${app.kafka.metadata-max-age-ms:30000}") int metadataMaxAgeMs) {
         Map<String, Object> props = new HashMap<>();
+        // El archivo se suscribe por patron: un topico nuevo se descubre al refrescar metadatos
+        // (Kafka refresca cada 5 min por defecto).
+        props.put(ConsumerConfig.METADATA_MAX_AGE_CONFIG, metadataMaxAgeMs);
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);

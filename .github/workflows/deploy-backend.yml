@@ -162,6 +162,12 @@ jobs:
               *) echo "::error::COGNITO_ENABLED debe ser 'true' o 'false'."; MISSING=1 ;;
             esac
           fi
+          # Los servicios con API confian en Cognito (administradores y clientes de la tienda): necesitan el pool y los app clients.
+          if jq -e '.include[] | select(.service | IN("catalog", "carrito", "orders", "notifications", "recommendation", "analytics"))' <<< "${SERVICES}" >/dev/null \
+             && [ "${COGNITO_ENABLED:-false}" = "true" ]; then
+            require COGNITO_ISSUER_URI "la variable"
+            require COGNITO_CLIENT_IDS "la variable"
+          fi
 
           if jq -e '.include[] | select(.service | IN("pagos", "catalog", "carrito", "analytics", "recommendation"))' <<< "${SERVICES}" >/dev/null \
              && [ -z "${KAFKA_BOOTSTRAP_SERVERS}" ]; then
@@ -604,11 +610,15 @@ jobs:
           SERVER_PORT: ${{ matrix.port }}
           DB_SCHEMA: ${{ matrix.db-schema }}
           IMAGE_URI: ${{ steps.image.outputs.uri }}
-          # Los crea el job provision; una variable de GitHub con valor los reemplaza.
-          DB_ENDPOINT: ${{ vars.DB_ENDPOINT || needs.provision.outputs.db_endpoint }}
+          # Los detecta el job provision (siempre el NLB/Aurora reales de esta cuenta). Las
+          # variables de GitHub solo se usan si provision no entrega valor: en Learner Lab
+          # el NLB se recrea y una variable fija queda apuntando a un DNS que ya no existe.
+          DB_ENDPOINT: ${{ needs.provision.outputs.db_endpoint || vars.DB_ENDPOINT }}
           DB_NAME: ${{ vars.DB_NAME || 'ecommerce' }}
           DB_USERNAME: ${{ vars.DB_USERNAME || 'dbadmin' }}
-          NLB_DNS: ${{ vars.NLB_DNS || needs.provision.outputs.nlb_dns }}
+          NLB_DNS: ${{ needs.provision.outputs.nlb_dns || vars.NLB_DNS }}
+          VAR_NLB_DNS: ${{ vars.NLB_DNS }}
+          VAR_DB_ENDPOINT: ${{ vars.DB_ENDPOINT }}
           RABBITMQ_USERNAME: ${{ vars.RABBITMQ_USERNAME || 'admin' }}
           RABBITMQ_VHOST: ${{ vars.RABBITMQ_VHOST || '/' }}
           KAFKA_BOOTSTRAP_SERVERS: ${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
@@ -634,6 +644,16 @@ jobs:
           CRED_ANTIFRAUDE_SECRETO_HASH: ${{ secrets.ANTIFRAUDE_SECRETO_HASH }}
         run: |
           set -euo pipefail
+
+          if [ -n "${VAR_NLB_DNS}" ] && [ "${VAR_NLB_DNS}" != "${NLB_DNS}" ]; then
+            echo "::warning::La variable NLB_DNS (${VAR_NLB_DNS}) no coincide con el NLB real (${NLB_DNS}); se usa el real. Borra o corrige la variable."
+          fi
+          if [ -n "${VAR_DB_ENDPOINT}" ] && [ "${VAR_DB_ENDPOINT}" != "${DB_ENDPOINT}" ]; then
+            echo "::warning::La variable DB_ENDPOINT (${VAR_DB_ENDPOINT}) no coincide con Aurora (${DB_ENDPOINT}); se usa el real. Borra o corrige la variable."
+          fi
+          if [ -n "${KAFKA_BOOTSTRAP_SERVERS}" ] && [ "${KAFKA_BOOTSTRAP_SERVERS%%:*}" != "${NLB_DNS}" ]; then
+            echo "::warning::KAFKA_BOOTSTRAP_SERVERS (${KAFKA_BOOTSTRAP_SERVERS}) no apunta al NLB actual (${NLB_DNS}). Si es un NLB viejo, borra la variable."
+          fi
 
           KAFKA="${KAFKA_BOOTSTRAP_SERVERS:-${NLB_DNS}:9092}"
           # carrito valida precios contra catalog por el NLB (listener 8080).
@@ -730,6 +750,17 @@ jobs:
                       ["COGNITO_DEFAULT_ROLE", $cognitoDefaultRole],
                       ["COGNITO_USER_INFO_URI", $cognitoUserInfo],
                       ["COGNITO_USER_INFO_TIMEOUT", $cognitoUserInfoTimeout]
+                    ] | map(select(.[1] != "") | kv(.[0]; .[1])))
+                else [] end)
+              # Todos los servicios con API confian tambien en Cognito (catalog: CATALOG_MANAGER/ADMIN;
+              # carrito, orders, recommendation: CUSTOMER; notifications: ADMIN; analytics: los tres).
+              # Mismo pool y app clients que auth; los grupos los fija cada servicio. pagos no valida JWT.
+              + (if ($service | IN("catalog", "carrito", "orders", "notifications", "recommendation", "analytics")) then
+                  [kv("COGNITO_ENABLED"; $cognitoEnabled)]
+                  + ([
+                      ["COGNITO_ISSUER_URI", $cognitoIssuer],
+                      ["COGNITO_JWK_SET_URI", $cognitoJwks],
+                      ["COGNITO_CLIENT_IDS", $cognitoClients]
                     ] | map(select(.[1] != "") | kv(.[0]; .[1])))
                 else [] end)
               # DynamoDB es OBLIGATORIO en AWS para recommendation (UserInteractions) y para

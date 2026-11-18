@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import com.camisetas360.analytics.messaging.TelemetriaPublisher;
+import com.camisetas360.analytics.model.ProductoTelemetria;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Clock;
@@ -37,12 +39,13 @@ class AnalyticsServiceTest {
     @Mock ProductoRepository productos;
     @Mock RecomendacionRepository recomendaciones;
     @Mock MetricasService metricas;
+    @Mock TelemetriaPublisher telemetria;
 
     private AnalyticsService service;
 
     @BeforeEach
     void setUp() {
-        service = new AnalyticsService(eventos, productos, recomendaciones, new RecomendacionEngine(), metricas, 6,
+        service = new AnalyticsService(eventos, productos, recomendaciones, new RecomendacionEngine(), metricas, telemetria, 6,
                 Clock.fixed(AHORA, ZoneOffset.UTC));
     }
 
@@ -55,9 +58,14 @@ class AnalyticsServiceTest {
                 new ProductoInfo("CHI-LOC", "Camiseta Chile Local", "Selecciones", 29990.0, 1),
                 new ProductoInfo("CHI-VIS", "Camiseta Chile Visita", "Selecciones", 27990.0, 0)));
 
+        var estado = new ProductoTelemetria("CHI-LOC", "Camiseta Chile Local", "Selecciones", 29990.0, 1, 0,
+                AHORA.toString());
+        when(productos.registrar(evento)).thenReturn(estado);
+
         service.registrar(evento);
 
         verify(productos).registrar(evento);
+        verify(telemetria).publicar(estado);
         verify(metricas).registrar(evento);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Recomendacion>> items = ArgumentCaptor.forClass(List.class);
@@ -75,7 +83,7 @@ class AnalyticsServiceTest {
 
         service.registrar(evento);
 
-        verifyNoInteractions(productos, recomendaciones, metricas);
+        verifyNoInteractions(productos, recomendaciones, metricas, telemetria);
     }
 
     @Test
@@ -86,7 +94,7 @@ class AnalyticsServiceTest {
         service.registrar(evento);
 
         verify(metricas).registrar(evento);
-        verifyNoInteractions(productos, recomendaciones);
+        verifyNoInteractions(productos, recomendaciones, telemetria);
         verify(eventos, never()).recientes(anyString(), anyInt());
     }
 

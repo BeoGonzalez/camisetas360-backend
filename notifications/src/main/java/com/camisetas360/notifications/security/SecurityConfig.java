@@ -2,18 +2,25 @@ package com.camisetas360.notifications.security;
 
 import jakarta.servlet.DispatcherType;
 import java.util.List;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationProvider;
+import org.springframework.security.oauth2.server.resource.authentication.JwtIssuerAuthenticationManagerResolver;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 import org.springframework.web.cors.CorsConfiguration;
@@ -22,6 +29,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
 @Import(JwtValidationConfig.class)
+@EnableConfigurationProperties(CognitoProperties.class)
 public class SecurityConfig {
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
@@ -33,7 +41,9 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationConverter converter,
             @Qualifier("corsConfigurationSource") CorsConfigurationSource cors,
-            @Value("${app.cors.enabled:false}") boolean localCors) throws Exception {
+            @Value("${app.cors.enabled:false}") boolean localCors, JwtDecoder entraDecoder,
+            @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String entraIssuer,
+            CognitoProperties cognito) throws Exception {
         http.csrf(csrf -> csrf.disable())
                 .cors(config -> {
                     if (localCors) config.configurationSource(cors);
@@ -51,8 +61,46 @@ public class SecurityConfig {
                         .access(new WebExpressionAuthorizationManager(
                                 "hasRole('ADMIN') and hasAuthority('SCOPE_Notifications.Send')"))
                         .anyRequest().denyAll())
-                .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+                .oauth2ResourceServer(resource -> {
+                    if (cognito.enabled()) {
+                        resource.authenticationManagerResolver(issuerResolver(entraIssuer, entraDecoder, converter, cognito));
+                    } else {
+                        resource.jwt(jwt -> jwt.jwtAuthenticationConverter(converter));
+                    }
+                });
         return http.build();
+    }
+
+    /**
+     * Entra ID (siempre) + Cognito: cada token se enruta por su {@code iss} exacto a su propio decoder; un
+     * issuer desconocido no obtiene manager y el token se rechaza con 401.
+     */
+    static JwtIssuerAuthenticationManagerResolver issuerResolver(String entraIssuer, JwtDecoder entraDecoder,
+            JwtAuthenticationConverter entraConverter, CognitoProperties cognito) {
+        var managers = managers(entraIssuer, entraDecoder, entraConverter, cognito);
+        return new JwtIssuerAuthenticationManagerResolver(issuer -> issuer == null ? null : managers.get(issuer));
+    }
+
+    /** Un AuthenticationManager por issuer de confianza (Entra siempre; Cognito si esta habilitado). */
+    static Map<String, AuthenticationManager> managers(String entraIssuer, JwtDecoder entraDecoder,
+            JwtAuthenticationConverter entraConverter, CognitoProperties cognito) {
+        if (!cognito.enabled()) {
+            return Map.of(entraIssuer, manager(entraDecoder, entraConverter));
+        }
+        if (cognito.issuerUri().equals(entraIssuer)) {
+            throw new IllegalStateException(CognitoProperties.PREFIX + "issuer-uri no puede coincidir con el issuer de Entra ID");
+        }
+        var cognitoConverter = new JwtAuthenticationConverter();
+        cognitoConverter.setJwtGrantedAuthoritiesConverter(new CognitoAuthoritiesConverter(cognito));
+        return Map.of(
+                entraIssuer, manager(entraDecoder, entraConverter),
+                cognito.issuerUri(), manager(CognitoJwtDecoders.create(cognito), cognitoConverter));
+    }
+
+    private static AuthenticationManager manager(JwtDecoder decoder, JwtAuthenticationConverter converter) {
+        var provider = new JwtAuthenticationProvider(decoder);
+        provider.setJwtAuthenticationConverter(converter);
+        return new ProviderManager(provider);
     }
 
     @Bean

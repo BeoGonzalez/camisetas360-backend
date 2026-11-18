@@ -2,8 +2,10 @@ package com.camisetas360.catalog.security;
 
 import jakarta.servlet.DispatcherType;
 import java.util.List;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.annotation.Bean;
@@ -13,7 +15,12 @@ import org.springframework.core.env.Environment;
 import org.springframework.boot.security.oauth2.server.resource.autoconfigure.OAuth2ResourceServerProperties;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationProvider;
+import org.springframework.security.oauth2.server.resource.authentication.JwtIssuerAuthenticationManagerResolver;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
@@ -23,6 +30,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
 @Import(JwtValidationConfig.class)
+@EnableConfigurationProperties(CognitoProperties.class)
 public class SecurityConfig {
     private static final String PRODUCTS = "/api/v1/catalog/products";
     private static final String PRODUCT = PRODUCTS + "/*";
@@ -41,7 +49,9 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationConverter converter,
             @Qualifier("corsConfigurationSource") CorsConfigurationSource cors,
             @Value("${app.cors.enabled:false}") boolean localCors,
-            OAuth2ResourceServerProperties resourceServer) throws Exception {
+            OAuth2ResourceServerProperties resourceServer, JwtDecoder entraDecoder,
+            CognitoProperties cognito) throws Exception {
+        String entraIssuer = resourceServer.getJwt().getIssuerUri();
         http.csrf(csrf -> csrf.disable())
                 .cors(config -> {
                     if (localCors) config.configurationSource(cors);
@@ -66,10 +76,41 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, PRODUCT, PRODUCT_IMAGE)
                         .access(new WebExpressionAuthorizationManager(MANAGE_CATALOG))
                         .anyRequest().denyAll())
-                .oauth2ResourceServer(resource -> resource
-                        .bearerTokenResolver(new PublicCatalogBearerTokenResolver(resourceServer.getJwt().getIssuerUri()))
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+                .oauth2ResourceServer(resource -> {
+                    resource.bearerTokenResolver(new PublicCatalogBearerTokenResolver(cognito.enabled()
+                            ? java.util.Set.of(entraIssuer, cognito.issuerUri()) : java.util.Set.of(entraIssuer)));
+                    if (cognito.enabled()) {
+                        // Dos issuers: cada token se valida solo con el decoder de su 'iss' exacto.
+                        resource.authenticationManagerResolver(issuerResolver(entraIssuer, entraDecoder, converter, cognito));
+                    } else {
+                        resource.jwt(jwt -> jwt.jwtAuthenticationConverter(converter));
+                    }
+                });
         return http.build();
+    }
+
+    /**
+     * Entra ID (siempre) + Cognito: un issuer desconocido no obtiene manager y el token se rechaza con 401.
+     * Los administradores de Cognito (grupos CATALOG_MANAGER/ADMIN) pueden gestionar el catalogo igual que
+     * los de Entra.
+     */
+    static JwtIssuerAuthenticationManagerResolver issuerResolver(String entraIssuer, JwtDecoder entraDecoder,
+            JwtAuthenticationConverter entraConverter, CognitoProperties cognito) {
+        if (cognito.issuerUri().equals(entraIssuer)) {
+            throw new IllegalStateException(CognitoProperties.PREFIX + "issuer-uri no puede coincidir con el issuer de Entra ID");
+        }
+        var cognitoConverter = new JwtAuthenticationConverter();
+        cognitoConverter.setJwtGrantedAuthoritiesConverter(new CognitoAuthoritiesConverter(cognito));
+        Map<String, AuthenticationManager> managers = Map.of(
+                entraIssuer, manager(entraDecoder, entraConverter),
+                cognito.issuerUri(), manager(CognitoJwtDecoders.create(cognito), cognitoConverter));
+        return new JwtIssuerAuthenticationManagerResolver(issuer -> issuer == null ? null : managers.get(issuer));
+    }
+
+    private static AuthenticationManager manager(JwtDecoder decoder, JwtAuthenticationConverter converter) {
+        var provider = new JwtAuthenticationProvider(decoder);
+        provider.setJwtAuthenticationConverter(converter);
+        return new ProviderManager(provider);
     }
 
     @Bean

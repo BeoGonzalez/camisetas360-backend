@@ -196,6 +196,39 @@ final class LocalJwtIssuer implements AutoCloseable {
         return jwt.serialize();
     }
 
+    static final String COGNITO_CLIENT = "cognito-test-client";
+    static final String COGNITO_SUB = "33333333-3333-3333-3333-333333333333";
+
+    /** Issuer de un user pool de Cognito simulado: mismo JWKS local, otro 'iss'. */
+    String cognitoIssuer() {
+        return issuer() + "/us-east-1_TestPool";
+    }
+
+    /**
+     * Access token con la forma de Cognito (sin aud ni tid/oid, con client_id, token_use, username y
+     * cognito:groups). Variantes: valid, id-token, other-client, no-username, sub-not-uuid, wrong-issuer,
+     * signature, expired.
+     */
+    String cognitoToken(java.util.List<String> groups, String variant) throws JOSEException {
+        var claims = new JWTClaimsSet.Builder()
+                .issuer("wrong-issuer".equals(variant) ? issuer() + "/us-east-1_OtherPool" : cognitoIssuer())
+                .subject("sub-not-uuid".equals(variant) ? "usuario-1" : COGNITO_SUB)
+                .claim("token_use", "id-token".equals(variant) ? "id" : "access")
+                .claim("client_id", "other-client".equals(variant) ? "another-client" : COGNITO_CLIENT)
+                .claim("username", "no-username".equals(variant) ? null : "usuario@example.test")
+                .claim("scope", "aws.cognito.signin.user.admin")
+                .claim("roles", java.util.List.of("ADMIN"))
+                .claim("cognito:groups", groups)
+                .issueTime(Date.from(Instant.parse("2020-01-01T00:00:00Z")))
+                .expirationTime(Date.from(Instant.parse(
+                        "expired".equals(variant) ? "2021-01-01T00:00:00Z" : "2100-01-01T00:00:00Z")))
+                .build();
+        var jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256)
+                .keyID(trustedKey.getKeyID()).build(), claims);
+        jwt.sign(new RSASSASigner("signature".equals(variant) ? wrongKey : trustedKey));
+        return jwt.serialize();
+    }
+
     @Override
     public void close() {
         server.stop(0);

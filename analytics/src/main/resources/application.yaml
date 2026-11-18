@@ -14,12 +14,31 @@ spring:
             - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
 
 app:
+  security:
+    # Amazon Cognito como segundo issuer (mismas variables que auth, catalog y carrito):
+    # los clientes reciben recomendaciones y ADMIN/CATALOG_MANAGER ven el dashboard. Grupos, rol por defecto y scopes implicitos propios de analytics.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      allowed-groups: ${ANALYTICS_COGNITO_ALLOWED_GROUPS:CUSTOMER,CATALOG_MANAGER,ADMIN}
+      default-role: ${ANALYTICS_COGNITO_DEFAULT_ROLE:CUSTOMER}
+      scopes: Catalog.Read
   cors:
     enabled: false
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     listeners-enabled: ${KAFKA_LISTENERS_ENABLED:true}
+    # Publica cada producto actualizado en telemetria.productos-actualizados (visible en Kafka UI).
+    telemetria-enabled: ${KAFKA_TELEMETRIA_ENABLED:true}
+    # Copia en DynamoDB (tabla <prefijo>kafka-registros) de los mensajes de los topicos de telemetria:
+    # navegacion (catalogo.*), carrito (carrito.*) y telemetria.*. Los de pagos y recommendation no.
+    archivo:
+      enabled: ${KAFKA_ARCHIVO_ENABLED:true}
+      patron: ${KAFKA_ARCHIVO_PATRON:^(catalogo|carrito|telemetria)[.].*}
+      ttl-dias: ${KAFKA_ARCHIVO_TTL_DIAS:90}
 
   dynamodb:
     # En ECS se usa la region y las credenciales del task role (LabRole).

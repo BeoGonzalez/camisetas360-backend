@@ -1,0 +1,24 @@
+# Login opcional con Microsoft Entra ID para Kafka UI. 04-kafka-ui.sh solo carga este archivo si recibe
+# KAFKA_UI_ENTRA_CLIENT_ID y KAFKA_UI_ENTRA_CLIENT_SECRET.
+#
+# En el registro de aplicacion de Entra (portal Azure):
+# - Plataforma Web con el redirect URI <frontend-api>/kafka-ui/login/oauth2/code/azure
+# - Un secreto de cliente
+# - El app role ADMIN asignado a los administradores (llega en el claim 'roles' del ID token)
+auth:
+  oauth2:
+    client:
+      azure:
+        clientId: ${KAFKA_UI_ENTRA_CLIENT_ID}
+        clientSecret: ${KAFKA_UI_ENTRA_CLIENT_SECRET}
+        scope: openid,email,profile
+        client-name: Microsoft Entra ID
+        provider: azure
+        redirect-uri: ${KAFKA_UI_BASE_URL}/login/oauth2/code/azure
+        authorization-grant-type: authorization_code
+        issuer-uri: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0
+        jwk-set-uri: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/discovery/v2.0/keys
+        user-name-attribute: email
+        custom-params:
+          type: oauth
+          roles-field: roles

@@ -2,6 +2,7 @@ package com.camisetas360.analytics.repository;
 
 import com.camisetas360.analytics.model.InteraccionEvento;
 import com.camisetas360.analytics.model.ProductoInfo;
+import com.camisetas360.analytics.model.ProductoTelemetria;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -49,8 +50,11 @@ public class ProductoRepository {
         this.clock = clock;
     }
 
-    /** Actualiza la ficha del producto y suma vistas o unidades agregadas segun el tipo de evento. */
-    public ProductoInfo registrar(InteraccionEvento evento) {
+    /**
+     * Actualiza la ficha del producto y suma vistas o unidades agregadas segun el tipo de evento.
+     * Devuelve el estado completo tras la actualizacion (la nueva imagen que ve el stream).
+     */
+    public ProductoTelemetria registrar(InteraccionEvento evento) {
         var producto = evento.producto();
         List<String> set = new ArrayList<>();
         Map<String, AttributeValue> valores = new HashMap<>();
@@ -82,9 +86,12 @@ public class ProductoRepository {
                 .returnValues(ReturnValue.ALL_NEW)
                 .build());
 
-        ProductoInfo info = aProducto(response.attributes());
+        var item = response.attributes();
+        ProductoInfo info = aProducto(item);
         cache.put(info.sku(), info);
-        return info;
+        return new ProductoTelemetria(info.sku(), info.nombre(), info.categoria(), info.precio(), info.vistas(),
+                item.containsKey("agregados") ? Long.parseLong(item.get("agregados").n()) : 0,
+                item.containsKey("actualizadoEn") ? item.get("actualizadoEn").s() : null);
     }
 
     public Collection<ProductoInfo> catalogo() {

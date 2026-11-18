@@ -1,5 +1,6 @@
 package com.camisetas360.analytics.service;
 
+import com.camisetas360.analytics.messaging.TelemetriaPublisher;
 import com.camisetas360.analytics.model.InteraccionEvento;
 import com.camisetas360.analytics.model.RecomendacionesGuardadas;
 import com.camisetas360.analytics.repository.EventoRepository;
@@ -17,7 +18,8 @@ import java.util.Optional;
 
 /**
  * Procesa cada interaccion: la guarda en el historial (idempotente), actualiza el producto
- * y las metricas, y recalcula las recomendaciones y el perfil del usuario.
+ * (y publica su nuevo estado en telemetria.productos-actualizados) y las metricas, y recalcula
+ * las recomendaciones y el perfil del usuario.
  */
 @Service
 public class AnalyticsService {
@@ -30,23 +32,27 @@ public class AnalyticsService {
     private final RecomendacionRepository recomendaciones;
     private final RecomendacionEngine engine;
     private final MetricasService metricas;
+    private final TelemetriaPublisher telemetria;
     private final int limite;
     private final Clock clock;
 
     @Autowired
     public AnalyticsService(EventoRepository eventos, ProductoRepository productos,
                             RecomendacionRepository recomendaciones, RecomendacionEngine engine,
-                            MetricasService metricas, @Value("${app.recomendaciones.limite:6}") int limite) {
-        this(eventos, productos, recomendaciones, engine, metricas, limite, Clock.systemUTC());
+                            MetricasService metricas, TelemetriaPublisher telemetria,
+                            @Value("${app.recomendaciones.limite:6}") int limite) {
+        this(eventos, productos, recomendaciones, engine, metricas, telemetria, limite, Clock.systemUTC());
     }
 
     AnalyticsService(EventoRepository eventos, ProductoRepository productos, RecomendacionRepository recomendaciones,
-                     RecomendacionEngine engine, MetricasService metricas, int limite, Clock clock) {
+                     RecomendacionEngine engine, MetricasService metricas, TelemetriaPublisher telemetria,
+                     int limite, Clock clock) {
         this.eventos = eventos;
         this.productos = productos;
         this.recomendaciones = recomendaciones;
         this.engine = engine;
         this.metricas = metricas;
+        this.telemetria = telemetria;
         this.limite = limite;
         this.clock = clock;
     }
@@ -60,7 +66,7 @@ public class AnalyticsService {
         if (evento.producto() == null) {
             return;
         }
-        productos.registrar(evento);
+        telemetria.publicar(productos.registrar(evento));
         recalcular(evento.usuarioId());
     }
 

@@ -65,6 +65,16 @@ management:
       enabled: false
 
 app:
+  security:
+    # Clientes del login propio (Amazon Cognito) usan el carrito igual que los de Entra ID.
+    # Mismas variables que auth y catalog; grupos y rol por defecto propios de carrito.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      allowed-groups: ${CARRITO_COGNITO_ALLOWED_GROUPS:CUSTOMER}
+      default-role: ${CARRITO_COGNITO_DEFAULT_ROLE:CUSTOMER}
   cors:
     enabled: false
   kafka:

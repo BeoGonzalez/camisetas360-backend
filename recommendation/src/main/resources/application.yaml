@@ -51,6 +51,17 @@ spring:
           max-interval: 5s
 
 app:
+  security:
+    # Amazon Cognito como segundo issuer (mismas variables que auth, catalog y carrito):
+    # los clientes de la tienda reciben recomendaciones. Grupos, rol por defecto y scopes implicitos propios de recommendation.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      allowed-groups: ${RECOMMENDATION_COGNITO_ALLOWED_GROUPS:CUSTOMER}
+      default-role: ${RECOMMENDATION_COGNITO_DEFAULT_ROLE:CUSTOMER}
+      scopes: Catalog.Read
   cors:
     enabled: false
 

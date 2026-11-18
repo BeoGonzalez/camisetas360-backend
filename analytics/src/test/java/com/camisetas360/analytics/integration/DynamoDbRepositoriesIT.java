@@ -54,7 +54,9 @@ class DynamoDbRepositoriesIT {
         initializer.crearTablas();
 
         assertThat(client.listTables().tableNames())
-                .contains(tables.eventos(), tables.productos(), tables.recomendaciones());
+                .contains(tables.eventos(), tables.productos(), tables.recomendaciones(), tables.kafkaRegistros());
+        assertThat(client.describeTable(r -> r.tableName(tables.kafkaRegistros())).table().keySchema())
+                .extracting(k -> k.attributeName()).containsExactly("topic", "registro");
     }
 
     @Test
@@ -108,7 +110,9 @@ class DynamoDbRepositoriesIT {
         assertThat(info.vistas()).isEqualTo(2);
         assertThat(info.nombre()).isEqualTo("Camiseta A 2026");
         assertThat(info.precio()).isEqualTo(12.0);
-        assertThat(productos.catalogo()).singleElement().isEqualTo(info);
+        assertThat(info.agregados()).isEqualTo(3);
+        assertThat(info.actualizadoEn()).isNotBlank();
+        assertThat(productos.catalogo()).singleElement().isEqualTo(info.info());
     }
 
     @Test
