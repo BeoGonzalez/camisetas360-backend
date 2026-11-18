@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
  * - eventos:          PK usuarioId, SK sk (occurredAt#eventId). Historial con TTL (expiresAt).
  * - productos:        PK sku. Productos conocidos y contadores de vistas/agregados.
  * - recomendaciones:  PK usuarioId. Recomendaciones y perfil de navegacion vigentes.
+ * - kafka-registros:  PK topic, SK registro. Copia de todos los mensajes de Kafka (TTL expiresAt).
  */
 @Component
 public class DynamoDbTables {
@@ -28,5 +29,10 @@ public class DynamoDbTables {
 
     public String recomendaciones() {
         return prefix + "recomendaciones";
+    }
+
+    /** Archivo de los mensajes de Kafka: PK topic, SK registro (particion#offset), TTL expiresAt. */
+    public String kafkaRegistros() {
+        return prefix + "kafka-registros";
     }
 }

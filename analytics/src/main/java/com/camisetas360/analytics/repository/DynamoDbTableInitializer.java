@@ -4,8 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.exception.SdkException;
@@ -30,7 +29,7 @@ import java.util.List;
  */
 @Component
 @ConditionalOnProperty(name = "app.dynamodb.create-tables", havingValue = "true", matchIfMissing = true)
-public class DynamoDbTableInitializer implements ApplicationRunner {
+public class DynamoDbTableInitializer implements SmartInitializingSingleton {
 
     private static final Logger log = LoggerFactory.getLogger(DynamoDbTableInitializer.class);
     private static final StreamSpecification STREAM_NEW_IMAGE = StreamSpecification.builder()
@@ -56,8 +55,13 @@ public class DynamoDbTableInitializer implements ApplicationRunner {
         this.streamProductos = streamProductos;
     }
 
+    /**
+     * Corre cuando ya existen todos los singletons pero antes de arrancar los contenedores de Kafka
+     * (SmartLifecycle): asi ningun consumidor escribe en una tabla que todavia se esta creando, lo que
+     * en AWS tarda segundos y agotaria los reintentos del archivo de Kafka al leer desde el inicio.
+     */
     @Override
-    public void run(ApplicationArguments args) {
+    public void afterSingletonsInstantiated() {
         crearTablas();
     }
 
@@ -65,6 +69,7 @@ public class DynamoDbTableInitializer implements ApplicationRunner {
         crear(tables.eventos(), "usuarioId", "sk", true, false);
         crear(tables.productos(), "sku", null, false, streamProductos);
         crear(tables.recomendaciones(), "usuarioId", null, false, false);
+        crear(tables.kafkaRegistros(), "topic", "registro", true, false);
     }
 
     private void crear(String tabla, String partitionKey, String sortKey, boolean ttl, boolean stream) {

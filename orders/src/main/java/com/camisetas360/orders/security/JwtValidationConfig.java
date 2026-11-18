@@ -47,7 +47,7 @@ public class JwtValidationConfig {
                     aud -> aud != null && aud.stream().anyMatch(audiences::contains)));
             validators.add(jwt -> {
                 try {
-                    EntraIdentity.from(jwt);
+                    EntraIdentity.fromEntra(jwt);
                     return OAuth2TokenValidatorResult.success();
                 } catch (InvalidBearerTokenException invalid) {
                     return OAuth2TokenValidatorResult.failure(

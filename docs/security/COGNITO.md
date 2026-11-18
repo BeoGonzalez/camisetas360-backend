@@ -4,8 +4,25 @@
 (opcional, `COGNITO_ENABLED=true`). Cada token se enruta por su claim `iss` exacto a su propio
 decoder/JWKS/validadores; un issuer desconocido recibe `401`.
 
-> Alcance: solo `auth` confia en Cognito. `catalog`, `carrito`, `orders`, `notifications`,
-> `recommendation` y `analytics` siguen aceptando unicamente tokens de Entra ID.
+> Alcance: todos los servicios con API (`auth`, `catalog`, `carrito`, `orders`, `notifications`,
+> `recommendation` y `analytics`) confian en Cognito; `pagos` no valida JWT. Grupos por servicio:
+> carrito/orders/recommendation `CUSTOMER` (rol por defecto CUSTOMER), notifications `ADMIN` (sin rol por
+> defecto), analytics `CUSTOMER,CATALOG_MANAGER,ADMIN` (por defecto CUSTOMER), catalog `CATALOG_MANAGER,ADMIN`.
+> Los scopes de cada servicio se conceden implicitamente. Kafka UI (`deploy/aws/04-kafka-ui.sh`) solo da
+> permisos al grupo `ADMIN`.
+>
+> **catalog** (administrar productos: stock, precio, fotos) acepta access tokens del mismo pool
+> (`COGNITO_ISSUER_URI`) y app clients (`COGNITO_CLIENT_IDS`), con `token_use=access`, `sub` y `username`.
+> El rol sale de `cognito:groups` filtrado por `CATALOG_COGNITO_ALLOWED_GROUPS` (por defecto
+> `CATALOG_MANAGER,ADMIN`); sin uno de esos grupos el token no puede escribir. `SCOPE_Catalog.Read` se
+> concede a todo token de Cognito valido, porque los tokens del login con usuario y contrasena (Lambda
+> `camisetas360-cognito-login`) no pueden traer scopes personalizados; la autorizacion la da el grupo.
+> Las lecturas del catalogo son publicas e ignoran el token de Cognito.
+>
+> **carrito** (clientes de la tienda) acepta los mismos tokens. Rol: `cognito:groups` filtrado por
+> `CARRITO_COGNITO_ALLOWED_GROUPS` (por defecto `CUSTOMER`); sin grupo permitido se usa
+> `CARRITO_COGNITO_DEFAULT_ROLE` (por defecto `CUSTOMER`, vacio = exigir grupo). `SCOPE_Checkout.Create` es
+> implicito. El `sub` debe ser un UUID: el dueno del carrito es (UUID v3 de `cognito:<iss>`, `sub`).
 
 ## Que valida `auth` en un token de Cognito
 

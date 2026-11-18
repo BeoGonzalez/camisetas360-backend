@@ -1,0 +1,61 @@
+# Kafka UI (kafbat) en AWS: solo cuentas con rol ADMIN.
+#
+# - Login con Amazon Cognito (OAuth2, authorization code). El grupo de Cognito ADMIN da acceso.
+# - Entra ID es opcional (entra.yml, se carga solo si 04-kafka-ui.sh recibe sus credenciales): el
+#   app role ADMIN del claim 'roles' da acceso.
+# - Cualquier otra cuenta puede autenticarse pero no tiene rol RBAC (no hay default-role): no ve clusters,
+#   topicos ni mensajes.
+# - El cluster ademas es de solo lectura (KAFKA_CLUSTERS_0_READONLY=true) y el rol solo tiene acciones de
+#   lectura.
+#
+# Los ${...} los resuelve Spring desde las variables de entorno de la task definition.
+auth:
+  type: OAUTH2
+  oauth2:
+    client:
+      cognito:
+        clientId: ${KAFKA_UI_COGNITO_CLIENT_ID}
+        clientSecret: ${KAFKA_UI_COGNITO_CLIENT_SECRET}
+        scope: openid,email,profile
+        client-name: Cognito
+        provider: cognito
+        redirect-uri: ${KAFKA_UI_BASE_URL}/login/oauth2/code/cognito
+        authorization-grant-type: authorization_code
+        issuer-uri: ${COGNITO_ISSUER_URI}
+        jwk-set-uri: ${COGNITO_ISSUER_URI}/.well-known/jwks.json
+        user-name-attribute: cognito:username
+        custom-params:
+          type: cognito
+          logoutUrl: ${KAFKA_UI_COGNITO_LOGOUT_URL}
+
+rbac:
+  roles:
+    - name: admins
+      clusters:
+        - ${KAFKA_CLUSTERS_0_NAME}
+      subjects:
+        - provider: oauth_cognito
+          type: group
+          value: ADMIN
+        - provider: oauth
+          type: role
+          value: ADMIN
+      permissions:
+        - resource: applicationconfig
+          actions: [ view ]
+        - resource: clusterconfig
+          actions: [ view ]
+        - resource: topic
+          value: ".*"
+          actions: [ view, messages_read, analysis_view ]
+        - resource: consumer
+          value: ".*"
+          actions: [ view ]
+        - resource: schema
+          value: ".*"
+          actions: [ view ]
+        - resource: connect
+          value: ".*"
+          actions: [ view ]
+        - resource: acl
+          actions: [ view ]

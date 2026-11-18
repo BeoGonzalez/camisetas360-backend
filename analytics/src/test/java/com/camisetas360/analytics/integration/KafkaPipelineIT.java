@@ -1,6 +1,9 @@
 package com.camisetas360.analytics.integration;
 
 import com.camisetas360.analytics.messaging.KafkaTopics;
+import com.camisetas360.analytics.repository.DynamoDbTables;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import com.camisetas360.analytics.service.AnalyticsService;
 import com.camisetas360.analytics.service.MetricasService;
 import com.camisetas360.analytics.support.DynamoDbLocalSupport;
@@ -30,7 +33,7 @@ import static org.awaitility.Awaitility.await;
  * Flujo completo: eventos JSON en Kafka (como los publican catalog, carrito y pagos)
  * -> consumidores -> DynamoDB Local -> recomendaciones y metricas.
  */
-@SpringBootTest(properties = "app.dynamodb.table-prefix=pipeline-it-")
+@SpringBootTest(properties = {"app.dynamodb.table-prefix=pipeline-it-", "app.kafka.metadata-max-age-ms=3000"})
 class KafkaPipelineIT {
 
     static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:3.8.0");
@@ -43,6 +46,8 @@ class KafkaPipelineIT {
 
     @Autowired AnalyticsService analytics;
     @Autowired MetricasService metricas;
+    @Autowired DynamoDbClient dynamo;
+    @Autowired DynamoDbTables tables;
     @MockitoBean JwtDecoder decoder;
 
     @DynamicPropertySource
@@ -94,6 +99,26 @@ class KafkaPipelineIT {
             assertThat(snapshot.eventosPorTipo().get("PRODUCTO_VISTO")).isGreaterThanOrEqualTo(2L);
             assertThat(snapshot.alertas()).extracting(a -> a.tipo()).contains("FRAUDE");
         });
+
+        // Telemetria: cada producto actualizado se publica en Kafka (lo que se ve en Kafka UI) y, como
+        // todo topico de telemetria, queda archivado en DynamoDB junto con la navegacion (incluido el
+        // JSON roto, que analytics descarta). Los topicos de pagos no se archivan.
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
+            var vistos = archivados(KafkaTopics.PRODUCTO_VISTO);
+            assertThat(vistos).extracting(i -> i.get("valor").s()).contains("{json roto");
+            assertThat(vistos).extracting(i -> i.get("clave").s()).contains(USUARIO, "otro");
+            var telemetria = archivados(KafkaTopics.TELEMETRIA_PRODUCTOS);
+            assertThat(telemetria).extracting(i -> i.get("clave").s()).contains("CHI-VIS", "CHI-LOC");
+            assertThat(telemetria).extracting(i -> i.get("valor").s())
+                    .anySatisfy(v -> assertThat(v).contains("\"sku\":\"CHI-LOC\"", "\"vistas\":1", "\"agregados\":0"));
+        });
+        assertThat(archivados(KafkaTopics.PAGO_FRAUDE_DETECTADO)).isEmpty();
+    }
+
+    private java.util.List<Map<String, AttributeValue>> archivados(String topic) {
+        return dynamo.query(q -> q.tableName(tables.kafkaRegistros())
+                .keyConditionExpression("topic = :t")
+                .expressionAttributeValues(Map.of(":t", AttributeValue.fromS(topic)))).items();
     }
 
     private static String visto(String usuario, String sku, String nombre, Instant cuando) {

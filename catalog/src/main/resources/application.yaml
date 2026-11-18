@@ -34,6 +34,15 @@ spring:
             - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
 
 app:
+  security:
+    # Segundo issuer: administradores de Amazon Cognito (grupos CATALOG_MANAGER/ADMIN) gestionan el
+    # catalogo igual que los de Entra. Mismas variables que auth; los grupos son propios de catalog.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      allowed-groups: ${CATALOG_COGNITO_ALLOWED_GROUPS:CATALOG_MANAGER,ADMIN}
   cors:
     enabled: false
   kafka:

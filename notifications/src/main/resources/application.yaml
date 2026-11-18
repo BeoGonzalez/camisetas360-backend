@@ -78,5 +78,16 @@ management:
       enabled: false
 
 app:
+  security:
+    # Amazon Cognito como segundo issuer (mismas variables que auth, catalog y carrito):
+    # los administradores envian notificaciones. Grupos, rol por defecto y scopes implicitos propios de notifications.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      allowed-groups: ${NOTIFICATIONS_COGNITO_ALLOWED_GROUPS:ADMIN}
+      default-role: ${NOTIFICATIONS_COGNITO_DEFAULT_ROLE:}
+      scopes: Notifications.Send
   mail:
     from: ${MAIL_FROM:${MAIL_USERNAME}}

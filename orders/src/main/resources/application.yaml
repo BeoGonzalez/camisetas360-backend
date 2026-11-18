@@ -84,3 +84,16 @@ management:
       enabled: false
     mail:
       enabled: false
+
+app:
+  security:
+    # Amazon Cognito como segundo issuer (mismas variables que auth, catalog y carrito):
+    # los clientes de la tienda ven sus pedidos. Grupos, rol por defecto y scopes implicitos propios de orders.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      allowed-groups: ${ORDERS_COGNITO_ALLOWED_GROUPS:CUSTOMER}
+      default-role: ${ORDERS_COGNITO_DEFAULT_ROLE:CUSTOMER}
+      scopes: Orders.Read
