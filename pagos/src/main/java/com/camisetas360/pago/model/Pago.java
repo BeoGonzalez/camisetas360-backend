@@ -34,11 +34,15 @@ public class Pago {
     @Column(name = "tarjeta_hash", nullable = false, length = 64)
     private String tarjetaHash;
 
-    @Column(name = "tarjeta_ultimos4", nullable = false, length = 4)
+    @Column(name = "tarjeta_ultimos4", length = 4)
     private String tarjetaUltimos4;
 
     @Column(name = "tarjeta_marca", nullable = false, length = 30)
     private String tarjetaMarca;
+
+    /** buy_order enviado a Webpay Plus; null en pagos del flujo simulado. */
+    @Column(name = "orden_compra", length = 26, unique = true)
+    private String ordenCompra;
 
     @Column(name = "mensaje_respuesta")
     private String mensajeRespuesta;
@@ -169,5 +173,13 @@ public class Pago {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public String getOrdenCompra() {
+        return ordenCompra;
+    }
+
+    public void setOrdenCompra(String ordenCompra) {
+        this.ordenCompra = ordenCompra;
     }
 }

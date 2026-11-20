@@ -1,4 +1,4 @@
-# Kafka UI (kafbat) en AWS: solo cuentas con rol ADMIN.
+# UI for Apache Kafka (provectuslabs/kafka-ui) en AWS: solo cuentas con rol ADMIN.
 #
 # - Login con Amazon Cognito (OAuth2, authorization code). El grupo de Cognito ADMIN da acceso.
 # - Entra ID es opcional (entra.yml, se carga solo si 04-kafka-ui.sh recibe sus credenciales): el

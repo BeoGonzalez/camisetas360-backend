@@ -47,12 +47,16 @@ class CartServiceTest {
     @Mock
     private CatalogoProductos catalogo;
 
+    @Mock
+    private CorreoContacto correoContacto;
+
     private CartService service;
 
     @BeforeEach
     void clearPreviousAuthentication() {
         SecurityContextHolder.clearContext();
-        service = new CartService(publisher, checkouts, catalogo, TransactionOperations.withoutTransaction());
+        service = new CartService(publisher, checkouts, catalogo, TransactionOperations.withoutTransaction(),
+                correoContacto);
     }
 
     /** El catalogo responde con estos precios; los SKU ausentes del mapa no existen. */
@@ -177,6 +181,28 @@ class CartServiceTest {
                 .claims(claims->claims.putAll(original.getClaims())).claim("email","contact@example.test").build();
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
         assertThat(service.createOrder(validRequest()).userEmail()).isEqualTo("contact@example.test");
+    }
+
+    @Test
+    void createOrder_shouldUseIdentityProviderEmail_whenTokenHasNoEmail() {
+        authenticate(null);
+        catalogoConPrecios(Map.of("SKU-A", 19.5));
+        when(correoContacto.buscar(any())).thenReturn(java.util.Optional.of("cognito@example.test"));
+
+        var response = service.createOrder(validRequest());
+
+        assertThat(response.userEmail()).isEqualTo("cognito@example.test");
+        verify(publisher).publishCheckoutRequested(any());
+    }
+
+    @Test
+    void createOrder_shouldNotQueryIdentityProvider_whenTokenHasEmail() {
+        authenticate("buyer@example.test");
+        catalogoConPrecios(Map.of("SKU-A", 19.5));
+
+        service.createOrder(validRequest());
+
+        verifyNoInteractions(correoContacto);
     }
 
     // UT-CART-006

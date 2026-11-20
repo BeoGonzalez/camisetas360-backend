@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Paso 4: Kafka UI (kafbat/kafka-ui) en ECS, publicado en el API del frontend, SOLO para cuentas ADMIN:
+# Paso 4: UI for Apache Kafka (provectuslabs/kafka-ui) en ECS, publicado en el API del frontend, SOLO para cuentas ADMIN:
 #
 #   https://<frontend-api>/kafka-ui/  -> VPC Link -> NLB :8088 -> kafka-ui-service (:8080)
 #   kafka-ui -> NLB :9092 -> kafka-service (bootstrap = KAFKA_ADVERTISED_LISTENERS del broker)
 #
-# Acceso: login OAuth2 con Amazon Cognito (Hosted UI) y, opcional, Microsoft Entra ID. Por RBAC solo el
-# grupo de Cognito ADMIN o el app role de Entra ADMIN tienen permisos; cualquier otra cuenta se autentica
-# pero no ve clusters, topicos ni mensajes. Ademas el cluster es de SOLO LECTURA.
-# La configuracion (OAuth2 + RBAC) esta en deploy/ecs/kafka-ui/ y se publica como imagen propia en ECR.
+# Acceso: login OAuth2 con Amazon Cognito (Hosted UI) y, opcional, Microsoft Entra ID. Solo entran el
+# grupo de Cognito ADMIN o el app role de Entra ADMIN: el filtro deploy/ecs/kafka-ui/admin-gate responde 403
+# (UI y API) a cualquier otra cuenta (CUSTOMER, CATALOG_MANAGER, sin grupos), y el RBAC de la UI solo da
+# permisos de lectura al rol ADMIN. Ademas el cluster es de SOLO LECTURA.
+# La configuracion (OAuth2 + RBAC + filtro) esta en deploy/ecs/kafka-ui/ y se publica como imagen propia en ECR.
+# Prueba local: python3 tests/kafka-ui/verify_kafka_ui_access.py
 #
 # Crea lo que falte (no borra nada): dominio de Hosted UI del user pool, app client confidencial
 # camisetas360-kafka-ui (code flow, callback /kafka-ui/login/oauth2/code/cognito), grupo ADMIN, repo ECR
@@ -128,8 +130,9 @@ aws cognito-idp get-group --user-pool-id "${USER_POOL_ID}" --group-name "${ADMIN
   log "+ grupo Cognito ${ADMIN_GROUP}"
 }
 
-# --- Imagen en ECR (kafbat + configuracion OAuth2/RBAC) -----------------------------------
-IMAGE_TAG="cfg-$(cat "${IMAGE_DIR}/Dockerfile" "${IMAGE_DIR}/kafka-ui.yml" "${IMAGE_DIR}/entra.yml" | sha256sum | cut -c1-12)"
+# --- Imagen en ECR (provectuslabs/kafka-ui + configuracion OAuth2/RBAC + admin-gate) -----------------------------------
+# La etiqueta cambia con cualquier archivo de la imagen (Dockerfile, configuracion y codigo de admin-gate).
+IMAGE_TAG="cfg-$(cd "${IMAGE_DIR}" && find . -type f -not -path './admin-gate/target/*' -print0 | LC_ALL=C sort -z   | xargs -0 sha256sum | sha256sum | cut -c1-12)"
 IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 aws ecr describe-repositories --repository-names "${ECR_REPOSITORY}" >/dev/null 2>&1 || {
   aws ecr create-repository --repository-name "${ECR_REPOSITORY}" \

@@ -8,8 +8,9 @@ decoder/JWKS/validadores; un issuer desconocido recibe `401`.
 > `recommendation` y `analytics`) confian en Cognito; `pagos` no valida JWT. Grupos por servicio:
 > carrito/orders/recommendation `CUSTOMER` (rol por defecto CUSTOMER), notifications `ADMIN` (sin rol por
 > defecto), analytics `CUSTOMER,CATALOG_MANAGER,ADMIN` (por defecto CUSTOMER), catalog `CATALOG_MANAGER,ADMIN`.
-> Los scopes de cada servicio se conceden implicitamente. Kafka UI (`deploy/aws/04-kafka-ui.sh`) solo da
-> permisos al grupo `ADMIN`.
+> Los scopes de cada servicio se conceden implicitamente. Kafka UI (`deploy/aws/04-kafka-ui.sh`, UI for Apache Kafka) solo
+> deja entrar al grupo `ADMIN`: `CUSTOMER`, `CATALOG_MANAGER` o una cuenta sin grupos reciben 403
+> (filtro `deploy/ecs/kafka-ui/admin-gate`).
 >
 > **catalog** (administrar productos: stock, precio, fotos) acepta access tokens del mismo pool
 > (`COGNITO_ISSUER_URI`) y app clients (`COGNITO_CLIENT_IDS`), con `token_use=access`, `sub` y `username`.

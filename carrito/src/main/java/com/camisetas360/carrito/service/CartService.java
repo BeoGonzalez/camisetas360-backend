@@ -26,13 +26,16 @@ public class CartService {
         private final CheckoutRequestRepository checkouts;
         private final CatalogoProductos catalogo;
         private final TransactionOperations transaction;
+        private final CorreoContacto correoContacto;
 
         public CartService(CheckoutEventPublisher checkoutEventPublisher, CheckoutRequestRepository checkouts,
-                           CatalogoProductos catalogo, TransactionOperations transaction) {
+                           CatalogoProductos catalogo, TransactionOperations transaction,
+                           CorreoContacto correoContacto) {
                 this.checkoutEventPublisher = checkoutEventPublisher;
                 this.checkouts = checkouts;
                 this.catalogo = catalogo;
                 this.transaction = transaction;
+                this.correoContacto = correoContacto;
         }
 
         public CheckoutResponseDTO createOrder(OrderRequestDTO request) {
@@ -45,6 +48,7 @@ public class CartService {
                 var identity = EntraIdentity.from(jwt);
                 String userEmail = jwt.getClaimAsString("email");
                 if (userEmail == null || userEmail.isBlank()) userEmail = jwt.getClaimAsString("preferred_username");
+                if (userEmail == null || userEmail.isBlank()) userEmail = correoContacto.buscar(jwt).orElse(null);
                 if (userEmail == null || userEmail.chars().anyMatch(Character::isWhitespace)
                         || !userEmail.matches("[^@]+@[^@]+[.][^@]+")) {
                         throw new MissingContactEmailException();
