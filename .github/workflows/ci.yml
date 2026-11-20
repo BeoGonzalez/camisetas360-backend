@@ -334,6 +334,57 @@ jobs:
 
 
   # ============================================================
+  # KAFKA UI ACCESS (UI for Apache Kafka, solo ADMIN)
+  # ============================================================
+
+  kafka-ui:
+    name: Test Kafka UI admin access
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: |
+            deploy/ecs/kafka-ui/admin-gate/pom.xml
+            deploy/ecs/kafka-ui/admin-gate/.mvn/wrapper/maven-wrapper.properties
+
+      - name: Verify admin-gate filter
+        working-directory: deploy/ecs/kafka-ui/admin-gate
+        run: |
+          set -euo pipefail
+          bash ./mvnw -B -ntp clean verify 2>&1 | tee ci-verify.log
+
+      - name: Verify only ADMIN accounts enter UI for Apache Kafka
+        run: |
+          set -euo pipefail
+          python3 tests/kafka-ui/verify_kafka_ui_access.py
+
+      - name: Upload test results and coverage
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-kafka-ui
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            deploy/ecs/kafka-ui/admin-gate/ci-verify.log
+            deploy/ecs/kafka-ui/admin-gate/target/surefire-reports/
+            deploy/ecs/kafka-ui/admin-gate/target/site/jacoco/
+
+
+  # ============================================================
   # MESSAGING CONTRACT / INTEGRATION TESTS
   # ============================================================
 
@@ -639,6 +690,7 @@ jobs:
     needs:
       - services
       - lambdas
+      - kafka-ui
       - messaging
       - e2e
       - compose
@@ -652,6 +704,7 @@ jobs:
         env:
           SERVICES_RESULT: ${{ needs.services.result }}
           LAMBDAS_RESULT: ${{ needs.lambdas.result }}
+          KAFKA_UI_RESULT: ${{ needs.kafka-ui.result }}
           MESSAGING_RESULT: ${{ needs.messaging.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
@@ -663,6 +716,7 @@ jobs:
             echo "|---|---|"
             echo "| Services | ${SERVICES_RESULT} |"
             echo "| Telemetria Lambda | ${LAMBDAS_RESULT} |"
+            echo "| Kafka UI admin access | ${KAFKA_UI_RESULT} |"
             echo "| Messaging | ${MESSAGING_RESULT} |"
             echo "| E2E | ${E2E_RESULT} |"
             echo "| Docker Compose | ${COMPOSE_RESULT} |"
@@ -672,6 +726,7 @@ jobs:
         env:
           SERVICES_RESULT: ${{ needs.services.result }}
           LAMBDAS_RESULT: ${{ needs.lambdas.result }}
+          KAFKA_UI_RESULT: ${{ needs.kafka-ui.result }}
           MESSAGING_RESULT: ${{ needs.messaging.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
@@ -680,6 +735,7 @@ jobs:
 
           test "${SERVICES_RESULT}" = "success"
           test "${LAMBDAS_RESULT}" = "success"
+          test "${KAFKA_UI_RESULT}" = "success"
           test "${MESSAGING_RESULT}" = "success"
           test "${E2E_RESULT}" = "success"
           test "${COMPOSE_RESULT}" = "success"

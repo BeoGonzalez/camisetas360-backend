@@ -46,6 +46,9 @@ BACKEND_ROUTES=(
   "GET /api/v1/pago/{id}"
   "GET /api/v1/pago/orden/{ordenId}"
   "GET /api/v1/pago/alertas"
+  "POST /api/v1/pago/webpay/iniciar"
+  "GET /api/v1/pago/webpay/retorno"
+  "POST /api/v1/pago/webpay/retorno"
 )
 
 FRONTEND_ROUTES=(

@@ -1,0 +1,10 @@
+# Solo para la prueba: apunta Cognito y Entra al proveedor OIDC simulado (el resto de la configuracion
+# es la real de deploy/ecs/kafka-ui).
+auth:
+  oauth2:
+    client:
+      cognito:
+        jwk-set-uri: http://oidc:8080/cognito/jwks
+      azure:
+        issuer-uri: http://oidc:8080/entra
+        jwk-set-uri: http://oidc:8080/entra/jwks

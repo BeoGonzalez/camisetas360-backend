@@ -12,4 +12,6 @@ import java.util.UUID;
 public interface PagoRepository extends JpaRepository<Pago, UUID> {
     Optional<Pago> findByTokenTransaccion(String tokenTransaccion);
     List<Pago> findByOrdenIdOrderByCreatedAtDesc(UUID ordenId);
+    Optional<Pago> findByOrdenCompra(String ordenCompra);
+    boolean existsByOrdenIdAndEstado(UUID ordenId, com.camisetas360.pago.model.EstadoPago estado);
 }

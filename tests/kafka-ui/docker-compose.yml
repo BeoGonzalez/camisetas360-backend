@@ -1,0 +1,34 @@
+# Prueba de acceso a UI for Apache Kafka (imagen real de deploy/ecs/kafka-ui) con un proveedor OIDC
+# simulado que emite los grupos de Cognito y app roles de Entra que pide la prueba.
+# La ejecuta tests/kafka-ui/verify_kafka_ui_access.py; no publica puertos en el host.
+name: c360-kafka-ui-test
+
+services:
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+    environment:
+      SERVER_PORT: "8080"
+      JSON_CONFIG: '{"interactiveLogin": true}'
+
+  kafka-ui:
+    image: ${KAFKA_UI_IMAGE:-c360-kafka-ui-test}
+    depends_on:
+      - oidc
+    volumes:
+      - ./mock-issuers.yml:/etc/kafkaui-test/mock-issuers.yml:ro
+    environment:
+      # Mismas variables que registra deploy/aws/04-kafka-ui.sh, con Entra habilitado.
+      KAFKA_CLUSTERS_0_NAME: camisetas360-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-inexistente:9092
+      KAFKA_CLUSTERS_0_READONLY: "true"
+      SERVER_SERVLET_CONTEXT_PATH: /kafka-ui
+      SPRING_CONFIG_ADDITIONALLOCATION: file:/etc/kafkaui/kafka-ui.yml,file:/etc/kafkaui/entra.yml,file:/etc/kafkaui-test/mock-issuers.yml
+      KAFKA_UI_BASE_URL: http://kafka-ui:8080/kafka-ui
+      COGNITO_ISSUER_URI: http://oidc:8080/cognito
+      KAFKA_UI_COGNITO_CLIENT_ID: kafka-ui-cognito
+      KAFKA_UI_COGNITO_CLIENT_SECRET: secreto-de-prueba
+      KAFKA_UI_COGNITO_LOGOUT_URL: http://oidc:8080/cognito/endsession
+      KAFKA_UI_ENTRA_CLIENT_ID: kafka-ui-entra
+      KAFKA_UI_ENTRA_CLIENT_SECRET: secreto-de-prueba
+      ENTRA_TENANT_ID: 00000000-0000-0000-0000-000000000000
+      DYNAMIC_CONFIG_ENABLED: "false"
