@@ -93,7 +93,11 @@ def client() -> int:
         return "cognito", claims
 
     def entra(roles, claim="roles"):
-        claims = {"email": "usuario@example.test", "name": "Usuario Prueba"}
+        claims = {
+            "preferred_username": "usuario-prueba@example.test",
+            "email": "usuario@example.test",
+            "name": "Usuario Prueba",
+        }
         if roles is not None:
             claims[claim] = roles
         return "azure", claims
@@ -162,7 +166,7 @@ def main() -> int:
     if "--client" in sys.argv:
         return client()
     if "--skip-build" not in sys.argv:
-        print("Construyendo la imagen de deploy/ecs/kafka-ui ...")
+        print("Construyendo la imagen de deploy/ecs/kafka-ui ...", flush=True)
         run("docker", "build", "-q", "-t", IMAGE, str(ROOT / "deploy" / "ecs" / "kafka-ui"), stdout=subprocess.DEVNULL)
     run(*COMPOSE, "down", "-v", "--remove-orphans", check=False, capture_output=True)
     try:
