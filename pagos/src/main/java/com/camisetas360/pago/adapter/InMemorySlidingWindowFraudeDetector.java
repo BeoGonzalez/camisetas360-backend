@@ -5,6 +5,7 @@ import com.camisetas360.pago.port.ResultadoEvaluacionFraude;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Primary;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -40,6 +41,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Redis (sorted sets ZADD/ZREMRANGEBYSCORE/ZCARD atómicos mediante script Lua, y una clave con TTL
  * para el bloqueo) implementando la misma interfaz FraudeDetector.
  */
+// @Primary: el detector de tarjetas es el que se inyecta por defecto; el de Webpay se pide con @Qualifier.
+@Primary
 @Component
 public class InMemorySlidingWindowFraudeDetector implements FraudeDetector {
 

@@ -2,11 +2,14 @@ package com.camisetas360.pago.webpay;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
+import com.camisetas360.pago.security.EntraIdentity;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.util.UUID;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,8 +48,12 @@ public class WebpayController {
     }
 
     @PostMapping("/iniciar")
-    public ResponseEntity<WebpayPagoService.Inicio> iniciar(@Valid @RequestBody IniciarWebpayRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.iniciar(request.ordenId(), request.monto()));
+    public ResponseEntity<WebpayPagoService.Inicio> iniciar(@Valid @RequestBody IniciarWebpayRequest request,
+                                                            @AuthenticationPrincipal Jwt jwt) {
+        var identidad = EntraIdentity.from(jwt);
+        String usuarioId = identidad.tenantId() + ":" + identidad.objectId();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(service.iniciar(usuarioId, request.ordenId(), request.monto()));
     }
 
     @RequestMapping(value = "/retorno", method = {RequestMethod.GET, RequestMethod.POST})

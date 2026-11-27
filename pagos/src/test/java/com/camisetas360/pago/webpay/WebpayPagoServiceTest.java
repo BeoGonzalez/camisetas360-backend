@@ -8,10 +8,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.camisetas360.pago.adapter.InMemorySlidingWindowFraudeDetector;
+import com.camisetas360.pago.exception.FraudeDetectadoException;
 import com.camisetas360.pago.exception.PagoInvalidoException;
 import com.camisetas360.pago.messaging.PagoEvento;
 import com.camisetas360.pago.messaging.PagoTopicos;
@@ -37,6 +40,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class WebpayPagoServiceTest {
 
     private static final String RETURN_URL = "https://front.example/api/v1/pago/webpay/retorno";
+    private static final String USUARIO = "tenant:usuario-1";
+    private static final String OTRO_USUARIO = "tenant:usuario-2";
 
     @Mock
     private PagoRepository pagos;
@@ -52,7 +57,9 @@ class WebpayPagoServiceTest {
     void setUp() {
         var properties = new WebpayProperties("https://webpay3gint.transbank.cl", "597055555532", "k",
                 RETURN_URL, "https://front.example/pago/resultado", Duration.ofSeconds(5));
-        service = new WebpayPagoService(pagos, outbox, webpay, properties, "secreto");
+        // Regla real de Webpay: 1 intento por ventana de 10 s; la segunda llamada bloquea 30 min.
+        service = new WebpayPagoService(pagos, outbox, webpay, properties,
+                new InMemorySlidingWindowFraudeDetector(1, 10, 30), "secreto");
         lenient().when(pagos.save(any(Pago.class))).thenAnswer(inv -> {
             Pago p = inv.getArgument(0);
             if (p.getId() == null) {
@@ -67,7 +74,7 @@ class WebpayPagoServiceTest {
         when(webpay.crear(anyString(), eq(ordenId.toString()), eq(15990L), eq(RETURN_URL)))
                 .thenReturn(new Transaccion("tok-1", "https://webpay/init"));
 
-        var inicio = service.iniciar(ordenId, new BigDecimal("15989.50"));
+        var inicio = service.iniciar(USUARIO, ordenId, new BigDecimal("15989.50"));
 
         assertThat(inicio.token()).isEqualTo("tok-1");
         assertThat(inicio.url()).isEqualTo("https://webpay/init");
@@ -90,15 +97,41 @@ class WebpayPagoServiceTest {
     void noSePuedePagarDosVecesLaMismaOrden() {
         when(pagos.existsByOrdenIdAndEstado(ordenId, EstadoPago.AUTORIZADO)).thenReturn(true);
 
-        assertThatThrownBy(() -> service.iniciar(ordenId, BigDecimal.TEN)).isInstanceOf(PagoInvalidoException.class);
+        assertThatThrownBy(() -> service.iniciar(USUARIO, ordenId, BigDecimal.TEN)).isInstanceOf(PagoInvalidoException.class);
         verifyNoInteractions(webpay);
     }
 
     @Test
     void montoQueRedondeaACeroSeRechaza() {
-        assertThatThrownBy(() -> service.iniciar(ordenId, new BigDecimal("0.4")))
+        assertThatThrownBy(() -> service.iniciar(USUARIO, ordenId, new BigDecimal("0.4")))
                 .isInstanceOf(PagoInvalidoException.class);
         verifyNoInteractions(webpay);
+    }
+
+    @Test
+    void segundaLlamadaEnDiezSegundosBloqueaAlUsuarioSinTocarWebpay() {
+        when(webpay.crear(anyString(), anyString(), anyLong(), eq(RETURN_URL)))
+                .thenReturn(new Transaccion("tok-1", "https://webpay/init"));
+        service.iniciar(USUARIO, ordenId, BigDecimal.TEN);
+
+        var segunda = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> service.iniciar(USUARIO, ordenId, BigDecimal.TEN), FraudeDetectadoException.class);
+
+        assertThat(segunda).isNotNull();
+        assertThat(segunda.getSegundosParaReintentar()).isPositive().isLessThanOrEqualTo(30 * 60);
+        verify(webpay, times(1)).crear(anyString(), anyString(), anyLong(), eq(RETURN_URL));
+        verify(pagos, times(1)).save(any(Pago.class));
+    }
+
+    @Test
+    void elBloqueoEsPorUsuario() {
+        when(webpay.crear(anyString(), anyString(), anyLong(), eq(RETURN_URL)))
+                .thenReturn(new Transaccion("tok-1", "https://webpay/init"));
+        service.iniciar(USUARIO, ordenId, BigDecimal.TEN);
+
+        var otroUsuario = service.iniciar(OTRO_USUARIO, ordenId, BigDecimal.TEN);
+
+        assertThat(otroUsuario.token()).isEqualTo("tok-1");
     }
 
     @Test

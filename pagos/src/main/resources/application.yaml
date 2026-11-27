@@ -78,6 +78,12 @@ antifraude:
   bloqueo-minutos: ${ANTIFRAUDE_BLOQUEO_MINUTOS:30}
   # Secreto del HMAC de las tarjetas. Obligatorio.
   secreto-hash: ${ANTIFRAUDE_SECRETO_HASH}
+  # Boton "Pagar con Webpay" (POST /webpay/iniciar), por usuario: con max-intentos=1, la segunda llamada
+  # dentro de la ventana (10 s) bloquea al usuario 30 min (429 BLOQUEADO_FRAUDE).
+  webpay:
+    max-intentos: ${ANTIFRAUDE_WEBPAY_MAX_INTENTOS:1}
+    ventana-segundos: ${ANTIFRAUDE_WEBPAY_VENTANA_SEGUNDOS:10}
+    bloqueo-minutos: ${ANTIFRAUDE_WEBPAY_BLOQUEO_MINUTOS:30}
 
 # Webpay Plus (Transbank). Por defecto: ambiente de INTEGRACION (no cobra). En produccion:
 # WEBPAY_BASE_URL=https://webpay3g.transbank.cl y el codigo de comercio propio.

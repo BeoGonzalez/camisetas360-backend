@@ -58,7 +58,10 @@ class PagoSecurityTest {
     @MockitoBean WebpayPagoService webpay;
 
     private static JwtRequestPostProcessor token(String... authorities) {
-        return jwt().authorities(java.util.Arrays.stream(authorities)
+        // tid/oid: identidad Entra que usa el antifraude de Webpay (EntraIdentity.from).
+        return jwt().jwt(j -> j.claim("tid", "11111111-1111-1111-1111-111111111111")
+                        .claim("oid", "22222222-2222-2222-2222-222222222222"))
+                .authorities(java.util.Arrays.stream(authorities)
                 .map(SimpleGrantedAuthority::new).toArray(SimpleGrantedAuthority[]::new));
     }
 
@@ -90,7 +93,7 @@ class PagoSecurityTest {
 
     @Test
     void clienteConScopeDeCheckoutPuedePagar() throws Exception {
-        when(webpay.iniciar(any(), any())).thenReturn(new WebpayPagoService.Inicio(ID, ID, BigDecimal.TEN, "t", "https://w"));
+        when(webpay.iniciar(any(), any(), any())).thenReturn(new WebpayPagoService.Inicio(ID, ID, BigDecimal.TEN, "t", "https://w"));
         mvc.perform(post("/api/v1/pago/webpay/iniciar").with(token("ROLE_CUSTOMER", "SCOPE_Checkout.Create"))
                         .contentType(MediaType.APPLICATION_JSON).content(INICIAR_WEBPAY))
                 .andExpect(status().isCreated());
@@ -102,7 +105,7 @@ class PagoSecurityTest {
      */
     @Test
     void sinCorsLocalNoSeRechazaElOriginDelFrontend() throws Exception {
-        when(webpay.iniciar(any(), any())).thenReturn(new WebpayPagoService.Inicio(ID, ID, BigDecimal.TEN, "t", "https://w"));
+        when(webpay.iniciar(any(), any(), any())).thenReturn(new WebpayPagoService.Inicio(ID, ID, BigDecimal.TEN, "t", "https://w"));
         mvc.perform(post("/api/v1/pago/webpay/iniciar").with(token("ROLE_CUSTOMER", "SCOPE_Checkout.Create"))
                         .header("Origin", "https://frontend.execute-api.us-east-1.amazonaws.com")
                         .contentType(MediaType.APPLICATION_JSON).content(INICIAR_WEBPAY))
