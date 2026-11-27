@@ -5,11 +5,13 @@
 decoder/JWKS/validadores; un issuer desconocido recibe `401`.
 
 > Alcance: todos los servicios con API (`auth`, `catalog`, `carrito`, `orders`, `notifications`,
-> `recommendation` y `analytics`) confian en Cognito; `pagos` no valida JWT. Grupos por servicio:
+> `recommendation`, `analytics` y `pagos`) confian en Cognito. Grupos por servicio:
 > carrito/orders/recommendation `CUSTOMER` (rol por defecto CUSTOMER), notifications `ADMIN` (sin rol por
-> defecto), analytics `CUSTOMER,CATALOG_MANAGER,ADMIN` (por defecto CUSTOMER), catalog `CATALOG_MANAGER,ADMIN`.
-> Los scopes de cada servicio se conceden implicitamente. Kafka UI (`deploy/aws/04-kafka-ui.sh`) solo da
-> permisos al grupo `ADMIN`.
+> defecto), analytics `CUSTOMER,CATALOG_MANAGER,ADMIN` (por defecto CUSTOMER), catalog `CATALOG_MANAGER,ADMIN`,
+> pagos `CUSTOMER,ADMIN` (por defecto CUSTOMER; scopes implicitos `Checkout.Create,Orders.Read`).
+> Los scopes de cada servicio se conceden implicitamente. Kafka UI (`deploy/aws/04-kafka-ui.sh`, UI for Apache Kafka) solo
+> deja entrar al grupo `ADMIN`: `CUSTOMER`, `CATALOG_MANAGER` o una cuenta sin grupos reciben 403
+> (filtro `deploy/ecs/kafka-ui/admin-gate`).
 >
 > **catalog** (administrar productos: stock, precio, fotos) acepta access tokens del mismo pool
 > (`COGNITO_ISSUER_URI`) y app clients (`COGNITO_CLIENT_IDS`), con `token_use=access`, `sub` y `username`.
@@ -43,7 +45,50 @@ se incluya explicitamente en `COGNITO_ALLOWED_GROUPS`, y no puede ser el rol por
 `GET /api/v1/auth/profile` exige `ROLE_CUSTOMER|CATALOG_MANAGER|ADMIN` + `SCOPE_Profile.Read`.
 El perfil se guarda por `(iss, sub)` con `userId = sub` y `tenantId = <userPoolId>`.
 
-## Configuracion en AWS (consola de Cognito, us-east-1)
+## Configuracion automatica (recomendada)
+
+```bash
+bash deploy/aws/00-cognito.sh      # user pool, resource server, grupos, dominio, app client y Lambda de login
+bash deploy/aws/01-api-gateway.sh  # HTTP APIs, rutas, rutas de la Lambda y authorizer JWT de Cognito
+bash deploy/aws/00-cognito.sh      # otra vez: agrega la URL del API del frontend a los callbacks
+bash deploy/aws/05-lambdas-dynamodb.sh  # Lambdas de DynamoDB (mensajero/stream) del mismo jar + WebSocket
+```
+
+Ambos son idempotentes. `00-cognito.sh` crea el pool `camisetas360-users` (login con email, contrasena
+min. 8 con mayuscula, minuscula y numero), el resource server `camisetas360-api`, los grupos `ADMIN`,
+`CATALOG_MANAGER` y `CUSTOMER`, el dominio `camisetas360-<cuenta>`, el app client publico
+`camisetas360-web` y la Lambda `camisetas360-cognito-login` (**Java 21**, se sube el jar de `telemetria/`,
+handler `com.camisetas360.telemetria.CognitoLoginHandler::handleRequest`, rol `LabRole`; compila con `mvnw`
+o usa `LAMBDA_JAR=<jar>`),
+e imprime las variables de GitHub a definir (`COGNITO_ENABLED=true`, `COGNITO_ISSUER_URI`,
+`COGNITO_CLIENT_IDS`, ...).
+
+### Lambda de login (`/api/v1/auth/cognito/*`, publicas, en ambos API)
+
+| Ruta | Body | Respuesta |
+|---|---|---|
+| `POST /login` | `{"email","password"}` | `200 {accessToken, idToken, refreshToken, expiresIn, tokenType}` / `401` |
+| `POST /refresh` | `{"refreshToken"}` | `200` tokens nuevos |
+| `POST /register` | `{"email","password","name"?}` | `201 {userSub, email, confirmed}` / `409` si existe / `400` politica |
+| `POST /confirm` | `{"email","code"}` | `200` (solo si `AUTO_CONFIRM=false`) |
+
+El registro deja al usuario en el grupo `CUSTOMER` y, con `AUTO_CONFIRM=true` (defecto, AWS Academy
+limita los correos de Cognito), lo confirma sin codigo. El frontend envia el **accessToken** (no el
+idToken) como `Authorization: Bearer`. Administradores: `aws cognito-idp admin-add-user-to-group
+--user-pool-id <pool> --username <email> --group-name ADMIN` (o `CATALOG_MANAGER`); el grupo nuevo
+aparece en el siguiente login.
+
+### API Gateway: authorizer JWT
+
+Ambos HTTP API tienen el authorizer `cognito-jwt` (issuer del pool, audiencia = app client web) en todas
+las rutas privadas: sin token o con un token invalido/expirado el gateway responde `401` sin llegar al
+servicio, que vuelve a validar el token y decide rol + scope (`403`). Publicas (`lib-seguridad-gateway.sh`):
+`GET /api/v1/catalog/products[/{sku}[/imagen]]`, `GET /api/v1/pago/retorno`,
+`GET|POST /api/v1/pago/webpay/retorno`, `/api/v1/auth/cognito/*`, la pagina (`GET /`, `GET /{proxy+}`) y
+`/kafka-ui`. Si el frontend tambien inicia sesion con Entra ID, ejecuta los scripts con `GATEWAY_JWT=off`
+(un authorizer JWT admite un solo issuer); los servicios siguen validando ambos.
+
+## Configuracion manual (consola de Cognito, us-east-1)
 
 1. **User pool**: crea uno (o usa el existente). Anota el *User pool ID* (`us-east-1_XXXXXXXXX`).
 2. **Resource server** (*App integration -> Resource servers*):

@@ -57,10 +57,12 @@ def verify_kafka_flows(stack, urls, tokens):
 
     # 4. Antifraude: con 2 intentos permitidos, el 3.o con la misma tarjeta se bloquea 30 min (429 + Retry-After)
     #    y pago.fraude-detectado llega por Kafka al dashboard de analytics.
+    #    pagos exige token (CUSTOMER + Checkout.Create): sin token, 401 y no cuenta como intento.
+    request(urls["pagos"] + "/api/v1/pago/iniciar", body={"ordenId": str(uuid.uuid4())}, expected=401)
     for attempt in range(3):
         body = {"ordenId": str(uuid.uuid4()), "monto": 10000, "numeroTarjeta": FRAUD_CARD, "cvv": "123",
                 "mesVencimiento": 12, "anioVencimiento": 2030, "nombreTitular": "QA Compose"}
-        request(urls["pagos"] + "/api/v1/pago/iniciar", body=body, expected=201 if attempt < 2 else 429)
+        request(urls["pagos"] + "/api/v1/pago/iniciar", owner, body=body, expected=201 if attempt < 2 else 429)
     eventually(lambda: stack.sql("pagos", "SELECT count(*) FROM pago.outbox_evento "
         "WHERE event_type = 'PAGO_FRAUDE_DETECTADO' AND estado = 'PUBLICADO'") == "1", timeout=60)
     assert stack.sql("pagos", "SELECT count(*) FROM pago.outbox_evento WHERE payload LIKE '%" + FRAUD_CARD + "%'") == "0", \
@@ -123,7 +125,7 @@ def main():
                 environment["CATALOG_BASE_URL"] = "http://catalog:8080"
                 depends_on["catalog"] = {"condition": "service_started"}
             if service == "pagos":
-                environment.update({"ANTIFRAUDE_SECRETO_HASH": stack.credentials["pagos"],
+                environment.update({"ANTIFRAUDE_SECRETO_HASH": stack.credentials["pagos"], "WEBPAY_API_KEY": "api-key-de-prueba",
                     "ANTIFRAUDE_MAX_INTENTOS": "2", "ANTIFRAUDE_VENTANA_SEGUNDOS": "300"})
             stack.document["services"][service] = {"build": {"context": str(ROOT / service)}, "environment": environment,
                 "networks": networks, "ports": ["127.0.0.1::8080"],

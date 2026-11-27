@@ -5,6 +5,7 @@ import com.camisetas360.carrito.repository.CheckoutRequestRepository;
 import com.camisetas360.carrito.security.SecurityConfig;
 import com.camisetas360.carrito.service.CartService;
 import com.camisetas360.carrito.service.CatalogoProductos;
+import com.camisetas360.carrito.service.CorreoContacto;
 import com.camisetas360.carrito.service.ProductoCatalogo;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,7 @@ class CartContactWebMvcTest {
     @TestConfiguration(proxyBeanMethods = false)
     static class SinTransaccion {
         @Bean TransactionOperations transactionOperations() { return TransactionOperations.withoutTransaction(); }
+        @Bean CorreoContacto correoContacto() { return CorreoContacto.NINGUNO; }
     }
 
     @BeforeEach void catalogoConocido() {

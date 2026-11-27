@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Paso 3: publica el frontend (Angular + nginx) detras de api-camisetas360-frontend, un solo origen:
+# Paso 3: publica el frontend (Angular + nginx) detras de api-gateway-frontend, un solo origen:
 #
 #   https://<frontend-api>/                     -> frontend-service (nginx :80) por VPC Link -> NLB :80
 #   https://<frontend-api>/api/v1/<servicio>/*  -> microservicio por VPC Link -> NLB :8080..8087
-#   POST /api/v1/auth/cognito/{login,register}  -> Lambda camisetas360-cognito-login (ya existente)
+#   POST /api/v1/auth/cognito/*                 -> Lambda camisetas360-cognito-login (00-cognito.sh)
+#
+# Las rutas /api/v1/* llevan el authorizer JWT de Cognito salvo las publicas (lib-seguridad-gateway.sh).
 #
 # Crea lo que falte (no borra nada): grupo de seguridad de las tareas del frontend, target group
 # c360-frontend + listener TCP 80 del NLB, log group, task definition frontend-task (si no existe),
@@ -20,14 +22,16 @@ set -euo pipefail
 # Git Bash en Windows convierte argumentos como /health o /ecs/frontend en rutas de Windows.
 export MSYS_NO_PATHCONV=1
 aws() { command aws "$@" | tr -d '\r'; }
+# shellcheck source=lib-seguridad-gateway.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-seguridad-gateway.sh"
 
 export AWS_DEFAULT_REGION=us-east-1
 REGION=us-east-1
 ECS_CLUSTER=ecommerce-cluster
 NLB_NAME=camisetas360-nlb
 VPCLINK_NAME=camisetas360-vpclink
-FRONTEND_API=api-camisetas360-frontend
-BACKEND_API=api-camisetas360-backend
+FRONTEND_API=api-gateway-frontend
+BACKEND_API=api-gateway-backend
 ECR_REPOSITORY=camisetas360-frontend
 TASK_FAMILY=frontend-task
 ECS_SERVICE=frontend-service
@@ -220,8 +224,19 @@ for prefijo in "${!PUERTOS[@]}"; do
   ruta "ANY ${prefijo}" "${INT}"
   ruta "ANY ${prefijo}/{proxy+}" "${INT}"
 done
-# Las rutas POST /api/v1/auth/cognito/{login,register} (Lambda) son mas especificas que
-# ANY /api/v1/auth/{proxy+} y siguen yendo a la Lambda: no se tocan.
+# Rutas publicas explicitas (mas especificas que ANY /<prefijo>/{proxy+}, que lleva el authorizer JWT):
+# lecturas del catalogo y retornos de Webpay, al mismo listener de su servicio.
+for publica in "${PUBLIC_API_ROUTES[@]}"; do
+  path="${publica#* }"
+  for prefijo in "${!PUERTOS[@]}"; do
+    case "${path}" in "${prefijo}"/*) ruta "${publica}" "$(integracion "${PUERTOS[${prefijo}]}")" ;; esac
+  done
+done
+# Las rutas POST /api/v1/auth/cognito/* (Lambda, 01-api-gateway.sh) son mas especificas que
+# ANY /api/v1/auth/{proxy+} y siguen yendo a la Lambda.
+cargar_cognito
+rutas_lambda "${FRONTEND_ID}"
+aplicar_seguridad "${FRONTEND_ID}" "$(asegurar_authorizer "${FRONTEND_ID}")"
 
 # --- CORS ---------------------------------------------------------------------------------
 FRONTEND_URL="$(aws apigatewayv2 get-api --api-id "${FRONTEND_ID}" --query ApiEndpoint --output text)"

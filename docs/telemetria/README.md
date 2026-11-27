@@ -11,7 +11,7 @@ catalog / carrito --Kafka--> analytics --UpdateItem--> DynamoDB camisetas360-ana
                                                               │ scan ConexionesWebSocket
                                                               ▼ postToConnection
 Frontend  <── wss:// API Gateway WebSocket <── Lambda "Mensajero" (MensajeroHandler)
-            ($connect valida el token Entra,     guarda/borra conexiones en ConexionesWebSocket)
+            ($connect valida el token Entra/Cognito,     guarda/borra conexiones en ConexionesWebSocket)
 ```
 
 ## Qué ya hace el backend
@@ -33,7 +33,25 @@ Diferencias con el código de la guía (corregidas a propósito):
 - Se transmite la tabla de **productos**, que no tiene datos personales. Las tablas `eventos` y `UserInteractions` contienen el
   `usuarioId` y por eso no se envían a todos.
 
-## Configuración en AWS Academy (us-east-1, rol `LabRole`)
+## Despliegue automático (recomendado)
+
+```bash
+bash deploy/aws/00-cognito.sh           # user pool + Lambda de login (mismo jar)
+bash deploy/aws/05-lambdas-dynamodb.sh  # tablas, Lambdas mensajero/stream, API WebSocket y trigger
+```
+
+`05-lambdas-dynamodb.sh` compila `telemetria/` (`mvnw clean verify`, o usa `LAMBDA_JAR=<jar>`) y sube el **mismo
+jar** a las tres Lambdas Java 21 (`camisetas360-cognito-login`, `mensajero`, `stream`). Crea si faltan
+`ConexionesWebSocket` (TTL `expiresAt`) y `camisetas360-analytics-productos` (PK `sku`, stream NEW_IMAGE, el mismo
+esquema que crea analytics), el API WebSocket **`api-gateway-telemetria`** (etapa `prod`, rutas `$connect`,
+`$disconnect`, `$default` -> `mensajero`) y el trigger DynamoDB -> `stream` (lote 25, LATEST). `$connect` acepta
+access tokens de **Cognito** (grupos `ADMIN`/`CATALOG_MANAGER`, variables `COGNITO_ISSUER_URI`/`COGNITO_CLIENT_IDS`
+que pone el script) y, si exportas `ENTRA_ISSUER_URI`/`ENTRA_AUDIENCE`, también de Entra ID; cada token va a su
+validador por `iss`.
+
+Los pasos manuales de abajo quedan como referencia.
+
+## Configuración manual en AWS Academy (us-east-1, rol `LabRole`)
 
 ### 0. Compilar el jar
 

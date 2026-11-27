@@ -83,6 +83,8 @@ class PagoIntegrationIT {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
         registry.add("antifraude.ventana-segundos", () -> 10);
+        registry.add("webpay.api-key", () -> "api-key-de-prueba");
+        registry.add("antifraude.secreto-hash", () -> "secreto-hmac-de-prueba");
     }
 
     @Autowired

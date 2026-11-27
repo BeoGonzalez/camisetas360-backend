@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Paso 2: conecta las rutas de api-camisetas360-backend (creadas por 01-api-gateway.sh) con los
+# Paso 2: conecta las rutas de api-gateway-backend (creadas por 01-api-gateway.sh) con los
 # microservicios: VPC Link (grupo camisetas360-vpclink) -> listener del NLB interno de cada servicio.
 # Requiere que deploy/aws/provision.sh ya haya creado el NLB, sus listeners y el grupo del VPC Link.
 # Es idempotente: reutiliza el VPC Link y las integraciones existentes y solo re-apunta las rutas.
@@ -11,7 +11,7 @@ set -euo pipefail
 aws() { command aws "$@" | tr -d '\r'; }
 
 export AWS_DEFAULT_REGION=us-east-1
-BACKEND_API=api-camisetas360-backend
+BACKEND_API=api-gateway-backend
 NLB_NAME=camisetas360-nlb
 VPCLINK_NAME=camisetas360-vpclink
 SG_VPCLINK_NAME=camisetas360-vpclink
@@ -86,6 +86,8 @@ done
 SIN_DESTINO=0
 while read -r ROUTE_ID METODO RUTA; do
   [ -z "${ROUTE_ID}" ] && continue
+  # Las rutas de login de Cognito van a la Lambda (01-api-gateway.sh), no al servicio auth.
+  case "${RUTA}" in /api/v1/auth/cognito/*) echo "  ${METODO} ${RUTA} -> Lambda (sin cambios)"; continue ;; esac
   puerto=""
   for prefijo in "${!PUERTOS[@]}"; do
     case "${RUTA}" in "${prefijo}"|"${prefijo}"/*) puerto="${PUERTOS[${prefijo}]}" ;; esac

@@ -274,7 +274,7 @@ services:
       - app-network
 
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: provectuslabs/kafka-ui:v0.7.2
     container_name: camisetas360-kafka-ui
     restart: unless-stopped
     ports:
@@ -517,17 +517,31 @@ services:
     ports:
       - "127.0.0.1:8087:8080"
     environment:
+      <<: *resource-server-environment
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: local
       SPRING_DATASOURCE_URL: jdbc:postgresql://pago-postgres:5432/${PAGO_POSTGRES_DB:?Define PAGO_POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${PAGO_POSTGRES_USER:?Define PAGO_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${PAGO_POSTGRES_PASSWORD:?Define PAGO_POSTGRES_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      OUTBOX_DELAY_MS: ${OUTBOX_DELAY_MS:-2000}
+      LOG_LEVEL_PAGOS: ${LOG_LEVEL_PAGOS:-INFO}
       ANTIFRAUDE_MAX_INTENTOS: ${ANTIFRAUDE_MAX_INTENTOS:-2}
       ANTIFRAUDE_VENTANA_SEGUNDOS: ${ANTIFRAUDE_VENTANA_SEGUNDOS:-10}
       ANTIFRAUDE_BLOQUEO_MINUTOS: ${ANTIFRAUDE_BLOQUEO_MINUTOS:-30}
       ANTIFRAUDE_SECRETO_HASH: ${ANTIFRAUDE_SECRETO_HASH:?Define ANTIFRAUDE_SECRETO_HASH}
+      WEBPAY_API_KEY: ${WEBPAY_API_KEY:?Define WEBPAY_API_KEY}
+      WEBPAY_BASE_URL: ${WEBPAY_BASE_URL:-https://webpay3gint.transbank.cl}
+      WEBPAY_CODIGO_COMERCIO: ${WEBPAY_CODIGO_COMERCIO:-597055555532}
+      WEBPAY_RETURN_URL: ${WEBPAY_RETURN_URL:-http://localhost:8087/api/v1/pago/webpay/retorno}
+      WEBPAY_RESULTADO_URL: ${WEBPAY_RESULTADO_URL:-http://localhost:4200/pago/resultado}
+      WEBPAY_TIMEOUT: ${WEBPAY_TIMEOUT:-10s}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:*}
+      # Clientes de Cognito (grupo CUSTOMER) pagan sus pedidos; ADMIN ve las alertas. Mismo pool que auth.
+      COGNITO_ENABLED: ${COGNITO_ENABLED:-false}
+      COGNITO_ISSUER_URI: ${COGNITO_ISSUER_URI:-}
+      COGNITO_JWK_SET_URI: ${COGNITO_JWK_SET_URI:-}
+      COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
