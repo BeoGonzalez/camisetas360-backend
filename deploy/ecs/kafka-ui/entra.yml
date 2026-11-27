@@ -19,7 +19,7 @@ auth:
         issuer-uri: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0
         jwk-set-uri: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/discovery/v2.0/keys
         # preferred_username (UPN): email no viene en la respuesta de Entra para cuentas sin buzon.
-        user-name-attribute: preferred_username
+        user-name-attribute: sub
         custom-params:
           type: oauth
           roles-field: roles

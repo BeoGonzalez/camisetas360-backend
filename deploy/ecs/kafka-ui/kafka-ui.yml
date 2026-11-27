@@ -23,7 +23,7 @@ auth:
         authorization-grant-type: authorization_code
         issuer-uri: ${COGNITO_ISSUER_URI}
         jwk-set-uri: ${COGNITO_ISSUER_URI}/.well-known/jwks.json
-        user-name-attribute: cognito:username
+        user-name-attribute: sub
         custom-params:
           type: cognito
           logoutUrl: ${KAFKA_UI_COGNITO_LOGOUT_URL}
