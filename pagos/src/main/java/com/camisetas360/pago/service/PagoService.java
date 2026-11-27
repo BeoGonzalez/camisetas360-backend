@@ -48,7 +48,7 @@ public class PagoService {
             FraudeDetector fraudeDetector,
             PasarelaPagoPort pasarelaPagoPort,
             OutboxService outboxService,
-            @Value("${antifraude.secreto-hash:dev-antifraude-secret-key-360-supersecreto}") String secretoHash
+            @Value("${antifraude.secreto-hash}") String secretoHash
     ) {
         this.pagoRepository = pagoRepository;
         this.alertaFraudeRepository = alertaFraudeRepository;

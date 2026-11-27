@@ -1,6 +1,8 @@
 package com.camisetas360.telemetria;
 
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -15,6 +17,8 @@ import java.util.Map;
  *   <li>{@code WS_AUTH_ENABLED}: {@code true} por defecto. {@code false} acepta conexiones sin token
  *       (solo para probar con wscat; nunca en una demo con datos reales).</li>
  *   <li>{@code CONEXION_TTL_HORAS}: vida maxima del registro de conexion (default 2, el maximo de API Gateway).</li>
+ *   <li>{@code COGNITO_ISSUER_URI} y {@code COGNITO_CLIENT_IDS} (separados por coma): opcionales; si estan, el
+ *       dashboard acepta tambien access tokens del user pool (grupos ADMIN o CATALOG_MANAGER).</li>
  * </ul>
  */
 public record Configuracion(
@@ -24,7 +28,17 @@ public record Configuracion(
         String audience,
         String jwksUri,
         boolean autenticacionHabilitada,
-        Duration ttlConexion) {
+        Duration ttlConexion,
+        String cognitoIssuer,
+        List<String> cognitoClientIds) {
+
+    public boolean entraConfigurado() {
+        return !issuer.isEmpty() && !audience.isEmpty();
+    }
+
+    public boolean cognitoConfigurado() {
+        return !cognitoIssuer.isEmpty();
+    }
 
     public static Configuracion desdeEntorno() {
         return desde(System.getenv());
@@ -38,7 +52,10 @@ public record Configuracion(
                 valor(env, "ENTRA_AUDIENCE", ""),
                 valor(env, "ENTRA_JWKS_URI", ""),
                 !"false".equalsIgnoreCase(valor(env, "WS_AUTH_ENABLED", "true")),
-                Duration.ofHours(Long.parseLong(valor(env, "CONEXION_TTL_HORAS", "2"))));
+                Duration.ofHours(Long.parseLong(valor(env, "CONEXION_TTL_HORAS", "2"))),
+                valor(env, "COGNITO_ISSUER_URI", ""),
+                Arrays.stream(valor(env, "COGNITO_CLIENT_IDS", "").split(","))
+                        .map(String::trim).filter(id -> !id.isEmpty()).toList());
     }
 
     private static String valor(Map<String, String> env, String nombre, String porDefecto) {

@@ -146,7 +146,7 @@ jobs:
 
           # Las credenciales de las aplicaciones salen de secrets de GitHub y deploy-services
           # las inyecta en cada task definition: DB_PASSWORD (Aurora), RABBITMQ_PASSWORD,
-          # MAIL_PASSWORD y ANTIFRAUDE_SECRETO_HASH. Un secret sin definir no se inyecta (se
+          # MAIL_PASSWORD, ANTIFRAUDE_SECRETO_HASH y WEBPAY_API_KEY. Un secret sin definir no se inyecta (se
           # conserva el valor registrado a mano en la task definition, si existe) y
           # deploy-services corta antes de desplegar si la credencial falta en ambos lados.
 
@@ -163,7 +163,7 @@ jobs:
             esac
           fi
           # Los servicios con API confian en Cognito (administradores y clientes de la tienda): necesitan el pool y los app clients.
-          if jq -e '.include[] | select(.service | IN("catalog", "carrito", "orders", "notifications", "recommendation", "analytics"))' <<< "${SERVICES}" >/dev/null \
+          if jq -e '.include[] | select(.service | IN("catalog", "carrito", "orders", "notifications", "recommendation", "analytics", "pagos"))' <<< "${SERVICES}" >/dev/null \
              && [ "${COGNITO_ENABLED:-false}" = "true" ]; then
             require COGNITO_ISSUER_URI "la variable"
             require COGNITO_CLIENT_IDS "la variable"
@@ -220,6 +220,7 @@ jobs:
           CRED_RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
           CRED_MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           CRED_ANTIFRAUDE_SECRETO_HASH: ${{ secrets.ANTIFRAUDE_SECRETO_HASH }}
+          CRED_WEBPAY_API_KEY: ${{ secrets.WEBPAY_API_KEY }}
         run: |
           set -euo pipefail
           FAILED=0
@@ -231,7 +232,7 @@ jobs:
               rabbitmq) echo "RABBITMQ_DEFAULT_PASS RABBITMQ_PASSWORD" ;;
               carrito|orders|recommendation) echo "SPRING_RABBITMQ_PASSWORD RABBITMQ_PASSWORD" ;;
               notifications) echo "SPRING_RABBITMQ_PASSWORD RABBITMQ_PASSWORD"; echo "MAIL_PASSWORD MAIL_PASSWORD" ;;
-              pagos) echo "ANTIFRAUDE_SECRETO_HASH ANTIFRAUDE_SECRETO_HASH" ;;
+              pagos) echo "ANTIFRAUDE_SECRETO_HASH ANTIFRAUDE_SECRETO_HASH"; echo "WEBPAY_API_KEY WEBPAY_API_KEY" ;;
             esac
           }
 
@@ -595,7 +596,7 @@ jobs:
       # lo que necesita.
       #
       # Las CREDENCIALES salen de secrets de GitHub (DB_PASSWORD,
-      # RABBITMQ_PASSWORD, MAIL_PASSWORD, ANTIFRAUDE_SECRETO_HASH) y se
+      # RABBITMQ_PASSWORD, MAIL_PASSWORD, ANTIFRAUDE_SECRETO_HASH, WEBPAY_API_KEY) y se
       # inyectan como variables de entorno del contenedor. Un secret
       # vacio no se inyecta: el render conserva lo que ya tenga la task
       # definition (valor a mano o "secrets" con valueFrom). El paso
@@ -642,11 +643,25 @@ jobs:
           COGNITO_DEFAULT_ROLE: ${{ vars.COGNITO_DEFAULT_ROLE }}
           COGNITO_USER_INFO_URI: ${{ vars.COGNITO_USER_INFO_URI }}
           COGNITO_USER_INFO_TIMEOUT: ${{ vars.COGNITO_USER_INFO_TIMEOUT }}
+          # Configuracion de pagos (pagos/.env.example). Variables de GitHub opcionales: la que no
+          # este definida no se inyecta y rige el valor por defecto de application.yaml.
+          PAGOS_ANTIFRAUDE_MAX_INTENTOS: ${{ vars.ANTIFRAUDE_MAX_INTENTOS }}
+          PAGOS_ANTIFRAUDE_VENTANA_SEGUNDOS: ${{ vars.ANTIFRAUDE_VENTANA_SEGUNDOS }}
+          PAGOS_ANTIFRAUDE_BLOQUEO_MINUTOS: ${{ vars.ANTIFRAUDE_BLOQUEO_MINUTOS }}
+          PAGOS_WEBPAY_BASE_URL: ${{ vars.WEBPAY_BASE_URL }}
+          PAGOS_WEBPAY_CODIGO_COMERCIO: ${{ vars.WEBPAY_CODIGO_COMERCIO }}
+          PAGOS_WEBPAY_TIMEOUT: ${{ vars.WEBPAY_TIMEOUT }}
+          PAGOS_WEBPAY_RETURN_URL: ${{ vars.WEBPAY_RETURN_URL }}
+          PAGOS_WEBPAY_RESULTADO_URL: ${{ vars.WEBPAY_RESULTADO_URL }}
+          PAGOS_OUTBOX_DELAY_MS: ${{ vars.OUTBOX_DELAY_MS }}
+          PAGOS_LOG_LEVEL_PAGOS: ${{ vars.LOG_LEVEL_PAGOS }}
+          PAGOS_JPA_SHOW_SQL: ${{ vars.JPA_SHOW_SQL }}
           # Credenciales: jq las lee del entorno ($ENV), no de la linea de comandos.
           CRED_DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           CRED_RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
           CRED_MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           CRED_ANTIFRAUDE_SECRETO_HASH: ${{ secrets.ANTIFRAUDE_SECRETO_HASH }}
+          CRED_WEBPAY_API_KEY: ${{ secrets.WEBPAY_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -738,13 +753,27 @@ jobs:
                   kv("MAIL_USERNAME"; $mailUser),
                   kv("MAIL_FROM"; $mailFrom)
                 ] + cred("MAIL_PASSWORD"; "CRED_MAIL_PASSWORD") else [] end)
-              + (if $service == "pagos" then cred("ANTIFRAUDE_SECRETO_HASH"; "CRED_ANTIFRAUDE_SECRETO_HASH") else [] end)
-              # Webpay Plus: Transbank devuelve al cliente al API del frontend (ruta /api/v1/pago/webpay/retorno)
-              # y pagos lo redirige a la pagina de resultado. Sin FRONTEND_ORIGIN quedan los valores locales.
-              + (if $service == "pagos" and $frontendOrigin != "" then [
-                  kv("WEBPAY_RETURN_URL"; $frontendOrigin + "/api/v1/pago/webpay/retorno"),
-                  kv("WEBPAY_RESULTADO_URL"; $frontendOrigin + "/pago/resultado")
-                ] else [] end)
+              + (if $service == "pagos" then cred("ANTIFRAUDE_SECRETO_HASH"; "CRED_ANTIFRAUDE_SECRETO_HASH")
+                  + cred("WEBPAY_API_KEY"; "CRED_WEBPAY_API_KEY") else [] end)
+              # pagos: configuracion de pagos/.env.example. Webpay devuelve al cliente al API del frontend
+              # (/api/v1/pago/webpay/retorno) y pagos lo redirige a /pago/resultado: ambas URLs salen de
+              # FRONTEND_ORIGIN salvo que WEBPAY_RETURN_URL / WEBPAY_RESULTADO_URL esten definidas. El resto
+              # (variables PAGOS_* del paso) se inyecta solo si la variable de GitHub tiene valor.
+              + (if $service == "pagos" then
+                  ($ENV.PAGOS_WEBPAY_RETURN_URL // "") as $ret
+                  | ($ENV.PAGOS_WEBPAY_RESULTADO_URL // "") as $res
+                  | (if $ret != "" then [kv("WEBPAY_RETURN_URL"; $ret)]
+                     elif $frontendOrigin != "" then [kv("WEBPAY_RETURN_URL"; $frontendOrigin + "/api/v1/pago/webpay/retorno")]
+                     else [] end)
+                  + (if $res != "" then [kv("WEBPAY_RESULTADO_URL"; $res)]
+                     elif $frontendOrigin != "" then [kv("WEBPAY_RESULTADO_URL"; $frontendOrigin + "/pago/resultado")]
+                     else [] end)
+                  + ([
+                      "ANTIFRAUDE_MAX_INTENTOS", "ANTIFRAUDE_VENTANA_SEGUNDOS", "ANTIFRAUDE_BLOQUEO_MINUTOS",
+                      "WEBPAY_BASE_URL", "WEBPAY_CODIGO_COMERCIO", "WEBPAY_TIMEOUT",
+                      "OUTBOX_DELAY_MS", "LOG_LEVEL_PAGOS", "JPA_SHOW_SQL"
+                    ] | map(. as $n | ($ENV["PAGOS_" + $n] // "") as $v | select($v != "") | kv($n; $v)))
+                else [] end)
               + (if $service == "carrito" then [
                   kv("CATALOG_BASE_URL"; $catalogUrl)
                 ] else [] end)
@@ -764,9 +793,9 @@ jobs:
                     ] | map(select(.[1] != "") | kv(.[0]; .[1])))
                 else [] end)
               # Todos los servicios con API confian tambien en Cognito (catalog: CATALOG_MANAGER/ADMIN;
-              # carrito, orders, recommendation: CUSTOMER; notifications: ADMIN; analytics: los tres).
-              # Mismo pool y app clients que auth; los grupos los fija cada servicio. pagos no valida JWT.
-              + (if ($service | IN("catalog", "carrito", "orders", "notifications", "recommendation", "analytics")) then
+              # carrito, orders, recommendation: CUSTOMER; notifications: ADMIN; analytics: los tres;
+              # pagos: CUSTOMER paga y ADMIN ve alertas). Mismo pool y app clients que auth; los grupos los fija cada servicio.
+              + (if ($service | IN("catalog", "carrito", "orders", "notifications", "recommendation", "analytics", "pagos")) then
                   [kv("COGNITO_ENABLED"; $cognitoEnabled)]
                   + ([
                       ["COGNITO_ISSUER_URI", $cognitoIssuer],
@@ -860,7 +889,7 @@ jobs:
           case "${SERVICE}" in
             carrito|orders|recommendation) REQUIRED+=(SPRING_RABBITMQ_PASSWORD) ;;
             notifications) REQUIRED+=(SPRING_RABBITMQ_PASSWORD MAIL_PASSWORD) ;;
-            pagos) REQUIRED+=(ANTIFRAUDE_SECRETO_HASH) ;;
+            pagos) REQUIRED+=(ANTIFRAUDE_SECRETO_HASH WEBPAY_API_KEY) ;;
             rabbitmq) REQUIRED+=(RABBITMQ_DEFAULT_PASS) ;;
           esac
 
@@ -881,7 +910,7 @@ jobs:
           done
 
           if [ "${#MISSING[@]}" -gt 0 ]; then
-            echo "::error::Faltan credenciales en ${TASK_FAMILY} (contenedor ${CONTAINER_NAME}): ${MISSING[*]}. Define el secret de GitHub que corresponde (SPRING_DATASOURCE_PASSWORD <- DB_PASSWORD; SPRING_RABBITMQ_PASSWORD y RABBITMQ_DEFAULT_PASS <- RABBITMQ_PASSWORD; MAIL_PASSWORD; ANTIFRAUDE_SECRETO_HASH) en Settings -> Secrets and variables -> Actions y vuelve a ejecutar el workflow. Tambien sirve registrarlas a mano en la task definition de ECS."
+            echo "::error::Faltan credenciales en ${TASK_FAMILY} (contenedor ${CONTAINER_NAME}): ${MISSING[*]}. Define el secret de GitHub que corresponde (SPRING_DATASOURCE_PASSWORD <- DB_PASSWORD; SPRING_RABBITMQ_PASSWORD y RABBITMQ_DEFAULT_PASS <- RABBITMQ_PASSWORD; MAIL_PASSWORD; ANTIFRAUDE_SECRETO_HASH; WEBPAY_API_KEY) en Settings -> Secrets and variables -> Actions y vuelve a ejecutar el workflow. Tambien sirve registrarlas a mano en la task definition de ECS."
             exit 1
           fi
           echo "Credenciales presentes en ${TASK_FAMILY}: ${REQUIRED[*]}"

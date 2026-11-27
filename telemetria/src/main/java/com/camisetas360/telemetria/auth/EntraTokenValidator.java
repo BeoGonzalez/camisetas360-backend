@@ -29,7 +29,7 @@ import java.util.function.Supplier;
  * analytics: firma RS256 (JWKS del tenant), issuer exacto, audience, exp obligatorio, tid/oid como
  * UUID canonico, rol ADMIN o CATALOG_MANAGER y scope Catalog.Read.
  */
-public class EntraTokenValidator {
+public class EntraTokenValidator implements ValidadorToken {
 
     static final Set<String> ROLES = Set.of("ADMIN", "CATALOG_MANAGER");
     static final String SCOPE = "Catalog.Read";
@@ -64,6 +64,7 @@ public class EntraTokenValidator {
     }
 
     /** @return el usuario como {@code <tid>:<oid>} en minusculas, igual que en el resto del backend. */
+    @Override
     public String validar(String token) throws TokenInvalidoException {
         if (token == null || token.isBlank()) {
             throw new TokenInvalidoException("Falta el token");

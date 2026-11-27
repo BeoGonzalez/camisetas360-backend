@@ -1,21 +1,27 @@
-server:
-  port: 8080
-
+# Toda la configuracion sale de variables de entorno (lista completa y valores locales en pagos/.env.example).
+# - Local (IDE o mvnw): se leen de pagos/.env si existe (no se versiona).
+# - Docker Compose: las pasa docker-compose.yml desde el .env de la raiz.
+# - AWS ECS: las registra el deploy (deploy-backend.yml) como variables de entorno de la task definition.
+# Las credenciales no tienen valor por defecto: sin ellas el servicio no arranca.
 spring:
+  config:
+    import: optional:file:.env[.properties]
+
   application:
-    name: pagos
+    name: ${SPRING_APPLICATION_NAME:pagos}
 
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5438/camisetas360_pago}
     username: ${SPRING_DATASOURCE_USERNAME:pago}
-    password: ${SPRING_DATASOURCE_PASSWORD:pago_dev_password_123}
+    password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
+  # Politica comun a todos los servicios (no configurable): Flyway nunca limpia y Hibernate solo valida.
   flyway:
     enabled: true
-    default-schema: pago
+    default-schema: ${PAGO_DB_SCHEMA:pago}
     schemas:
-      - pago
+      - ${PAGO_DB_SCHEMA:pago}
     baseline-on-migrate: true
     clean-disabled: true
 
@@ -24,12 +30,13 @@ spring:
       ddl-auto: validate
     properties:
       hibernate:
-        default_schema: pago
-    show-sql: false
+        default_schema: ${PAGO_DB_SCHEMA:pago}
+    show-sql: ${JPA_SHOW_SQL:false}
     open-in-view: false
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    # acks=all + idempotencia: requisito del outbox (sin duplicados ni perdidas), no configurable.
     producer:
       acks: all
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -38,19 +45,47 @@ spring:
         enable.idempotence: true
         spring.json.add.type.headers: false
 
+  # Microsoft Entra ID (mismas variables que el resto de servicios con API).
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${ENTRA_ISSUER_URI:https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0}
+          audiences:
+            - ${ENTRA_AUDIENCE:719c999d-0f57-4ad5-9bd9-a72be5ca07e0}
+
+server:
+  port: ${SERVER_PORT:8080}
+
+app:
+  security:
+    # Amazon Cognito como segundo issuer (mismo pool y app clients que el resto): los clientes pagan sus
+    # pedidos (grupo CUSTOMER, rol por defecto CUSTOMER) y ADMIN ve las alertas de fraude. Los tokens del
+    # login con usuario y contrasena no traen scopes propios: se conceden los de pagos de forma implicita.
+    cognito:
+      enabled: ${COGNITO_ENABLED:false}
+      issuer-uri: ${COGNITO_ISSUER_URI:}
+      jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+      client-ids: ${COGNITO_CLIENT_IDS:}
+      allowed-groups: ${PAGOS_COGNITO_ALLOWED_GROUPS:CUSTOMER,ADMIN}
+      default-role: ${PAGOS_COGNITO_DEFAULT_ROLE:CUSTOMER}
+      scopes: Checkout.Create,Orders.Read
+
 antifraude:
   max-intentos: ${ANTIFRAUDE_MAX_INTENTOS:2}
   ventana-segundos: ${ANTIFRAUDE_VENTANA_SEGUNDOS:10}
   # Tras superar el maximo de intentos, la tarjeta queda bloqueada este tiempo (no se alarga con reintentos).
   bloqueo-minutos: ${ANTIFRAUDE_BLOQUEO_MINUTOS:30}
-  secreto-hash: ${ANTIFRAUDE_SECRETO_HASH:dev-antifraude-secret-key-360-supersecreto}
+  # Secreto del HMAC de las tarjetas. Obligatorio.
+  secreto-hash: ${ANTIFRAUDE_SECRETO_HASH}
 
-# Webpay Plus (Transbank). Por defecto: ambiente de INTEGRACION con las credenciales de prueba publicas
-# de Transbank (no cobran). En produccion: WEBPAY_BASE_URL=https://webpay3g.transbank.cl y las del comercio.
+# Webpay Plus (Transbank). Por defecto: ambiente de INTEGRACION (no cobra). En produccion:
+# WEBPAY_BASE_URL=https://webpay3g.transbank.cl y el codigo de comercio propio.
 webpay:
   base-url: ${WEBPAY_BASE_URL:https://webpay3gint.transbank.cl}
   codigo-comercio: ${WEBPAY_CODIGO_COMERCIO:597055555532}
-  api-key: ${WEBPAY_API_KEY:579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C}
+  # Tbk-Api-Key-Secret. Obligatoria y nunca en el repositorio.
+  api-key: ${WEBPAY_API_KEY:}
   # A donde Webpay devuelve al cliente (este servicio, por el API Gateway) y la pagina de resultado del frontend.
   return-url: ${WEBPAY_RETURN_URL:http://localhost:8087/api/v1/pago/webpay/retorno}
   resultado-url: ${WEBPAY_RESULTADO_URL:http://localhost:4200/pago/resultado}
@@ -58,13 +93,13 @@ webpay:
 
 outbox:
   scheduler:
-    delay-ms: 2000
-    batch-size: 50
+    delay-ms: ${OUTBOX_DELAY_MS:2000}
 
 logging:
   level:
-    com.camisetas360.pago: INFO
+    com.camisetas360.pago: ${LOG_LEVEL_PAGOS:INFO}
 
+# Contrato de health comun a todos los servicios (ver HealthContract): no configurable.
 management:
   endpoints:
     web:

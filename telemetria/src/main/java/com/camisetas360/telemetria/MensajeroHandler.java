@@ -4,12 +4,16 @@ import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayV2WebSocketEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayV2WebSocketResponse;
+import com.camisetas360.telemetria.auth.CognitoTokenValidator;
 import com.camisetas360.telemetria.auth.EntraTokenValidator;
 import com.camisetas360.telemetria.auth.TokenInvalidoException;
+import com.camisetas360.telemetria.auth.ValidadorPorIssuer;
+import com.camisetas360.telemetria.auth.ValidadorToken;
 import com.camisetas360.telemetria.conexiones.ConexionesRepository;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 
 import java.time.Clock;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -17,7 +21,7 @@ import java.util.Map;
  * Se integra con las rutas {@code $connect}, {@code $disconnect} y {@code $default} del API WebSocket.
  *
  * <p>{@code $connect}: el navegador no puede enviar el header Authorization en un WebSocket, asi que el
- * access token de Entra llega como query string: {@code wss://.../prod?token=<access_token>}. Si no es
+ * access token (Entra ID o Cognito) llega como query string: {@code wss://.../prod?token=<access_token>}. Si no es
  * valido se responde 401 y API Gateway rechaza la conexion. {@code $disconnect} borra el registro.
  */
 public class MensajeroHandler implements RequestHandler<APIGatewayV2WebSocketEvent, APIGatewayV2WebSocketResponse> {
@@ -25,7 +29,7 @@ public class MensajeroHandler implements RequestHandler<APIGatewayV2WebSocketEve
     static final String ANONIMO = "anonimo";
 
     private final ConexionesRepository conexiones;
-    private final EntraTokenValidator validator; // null si WS_AUTH_ENABLED=false
+    private final ValidadorToken validator; // null si WS_AUTH_ENABLED=false
     private final Clock clock;
 
     /** Constructor usado por el runtime de Lambda: se ejecuta una vez por contenedor. */
@@ -35,13 +39,24 @@ public class MensajeroHandler implements RequestHandler<APIGatewayV2WebSocketEve
 
     private MensajeroHandler(Configuracion config, DynamoDbClient dynamo) {
         this(new ConexionesRepository(dynamo, config.tablaConexiones(), config.ttlConexion()),
-                config.autenticacionHabilitada()
-                        ? EntraTokenValidator.remoto(config.issuer(), config.audience(), config.jwksUri())
-                        : null,
+                config.autenticacionHabilitada() ? validador(config) : null,
                 Clock.systemUTC());
     }
 
-    MensajeroHandler(ConexionesRepository conexiones, EntraTokenValidator validator, Clock clock) {
+    /** Entra ID y/o Cognito segun las variables definidas; cada token va a su validador por {@code iss}. */
+    static ValidadorToken validador(Configuracion config) {
+        Map<String, ValidadorToken> porIssuer = new HashMap<>();
+        if (config.entraConfigurado()) {
+            porIssuer.put(config.issuer(), EntraTokenValidator.remoto(config.issuer(), config.audience(), config.jwksUri()));
+        }
+        if (config.cognitoConfigurado()) {
+            var cognito = CognitoTokenValidator.remoto(config.cognitoIssuer(), config.cognitoClientIds());
+            porIssuer.put(cognito.issuer(), cognito);
+        }
+        return new ValidadorPorIssuer(porIssuer);
+    }
+
+    MensajeroHandler(ConexionesRepository conexiones, ValidadorToken validator, Clock clock) {
         this.conexiones = conexiones;
         this.validator = validator;
         this.clock = clock;

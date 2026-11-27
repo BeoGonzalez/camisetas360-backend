@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Paso 1: crea las dos HTTP API (api-camisetas360-frontend y api-camisetas360-backend) con sus rutas,
-# sin integraciones todavia. El CORS del backend permite la URL de la API del frontend y localhost:4200/4201/5173.
+# Paso 1: crea las dos HTTP API (api-gateway-frontend y api-gateway-backend) con sus rutas.
+# Las rutas de los microservicios quedan sin integracion (las conecta 02-integraciones.sh); las de la
+# Lambda de login (POST /api/v1/auth/cognito/{login,register,refresh,confirm}) se conectan aqui en ambos API.
+# Seguridad: authorizer JWT del user pool de Cognito (00-cognito.sh) en todas las rutas privadas; quedan
+# publicas las lecturas del catalogo, los retornos de Webpay y la Lambda de login (ver lib-seguridad-gateway.sh).
+# El CORS del backend permite la URL de la API del frontend y localhost:4200/4201/5173.
 # Ejecutar en AWS CloudShell (us-east-1). Es idempotente: si la API o una ruta ya existe, la reutiliza.
 #
 #   bash 01-api-gateway.sh
@@ -9,12 +13,16 @@
 # (frontend en ECS + API del frontend como origen unico de la pagina y de /api/v1/*).
 set -euo pipefail
 
+# Git Bash en Windows convierte argumentos como /api/v1/... en rutas de Windows.
+export MSYS_NO_PATHCONV=1
 # El AWS CLI de Windows (Git Bash) termina las lineas con \r: se limpia para comparar ids y rutas.
 aws() { command aws "$@" | tr -d '\r'; }
 
 export AWS_DEFAULT_REGION=us-east-1
-BACKEND_API=api-camisetas360-backend
-FRONTEND_API=api-camisetas360-frontend
+# shellcheck source=lib-seguridad-gateway.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-seguridad-gateway.sh"
+BACKEND_API=api-gateway-backend
+FRONTEND_API=api-gateway-frontend
 # Origenes locales de desarrollo (Angular `pnpm start` en 4200/4201 contra AWS, Vite en 5173).
 # La URL de la API del frontend se agrega sola mas abajo. 03-frontend.sh aplica el mismo CORS.
 LOCAL_ORIGINS=(http://localhost:4200 http://localhost:4201 http://localhost:5173)
@@ -110,6 +118,18 @@ CORS_JSON="{\"AllowOrigins\":[${ORIGINS_JSON%,}],\"AllowHeaders\":[\"authorizati
 
 BACKEND_ID="$(crear_api "${BACKEND_API}" "${CORS_JSON}")"
 crear_rutas "${BACKEND_ID}" "${BACKEND_ROUTES[@]}"
+
+# --- Cognito: Lambda de login + authorizer JWT -----------------------------------------------
+cargar_cognito
+if [ -z "${COGNITO_POOL_ID}" ]; then
+  echo "! no existe el user pool ${COGNITO_POOL_NAME}: ejecuta antes 00-cognito.sh (las rutas quedan sin authorizer)" >&2
+fi
+for API in "${BACKEND_ID}" "${FRONTEND_ID}"; do
+  echo "Seguridad de $(aws apigatewayv2 get-api --api-id "${API}" --query Name --output text):"
+  rutas_lambda "${API}"
+  AUTH_ID="$(asegurar_authorizer "${API}")"
+  aplicar_seguridad "${API}" "${AUTH_ID}"
+done
 
 echo
 echo "URL backend : $(aws apigatewayv2 get-api --api-id "${BACKEND_ID}" --query ApiEndpoint --output text)"

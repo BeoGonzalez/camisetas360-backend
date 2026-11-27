@@ -40,7 +40,7 @@ public class WebpayPagoService {
 
     public WebpayPagoService(PagoRepository pagos, OutboxService outbox, WebpayPlusPort webpay,
                              WebpayProperties properties,
-                             @Value("${antifraude.secreto-hash:dev-antifraude-secret-key-360-supersecreto}") String secretoHash) {
+                             @Value("${antifraude.secreto-hash}") String secretoHash) {
         this.pagos = pagos;
         this.outbox = outbox;
         this.webpay = webpay;

@@ -18,6 +18,9 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import com.camisetas360.pago.security.SecurityConfig;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.test.context.support.WithMockUser;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -30,7 +33,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(PagoController.class)
-@Import(GlobalExceptionHandler.class)
+@Import({GlobalExceptionHandler.class, SecurityConfig.class})
+// Usuario autenticado con todos los permisos de pagos: las reglas en si se prueban en PagoSecurityTest.
+@WithMockUser(authorities = {"ROLE_CUSTOMER", "ROLE_ADMIN", "SCOPE_Checkout.Create", "SCOPE_Orders.Read"})
 class PagoControllerTest {
 
         @Autowired
@@ -40,6 +45,9 @@ class PagoControllerTest {
                         .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
 
         @MockitoBean
+    private JwtDecoder jwtDecoder;
+
+    @MockitoBean
         private PagoService pagoService;
 
         @Test
@@ -214,17 +222,14 @@ class PagoControllerTest {
         }
 
         @Test
-        @DisplayName("Ruta inexistente retorna 404 y metodo no soportado retorna 405")
+        @DisplayName("Ruta o metodo no declarados se deniegan (403, deny-by-default), nunca 500")
         void erroresDeRutaNoSon500() throws Exception {
                 mockMvc.perform(get("/api/v1/pago/no/existe"))
-                                .andExpect(status().isNotFound())
-                                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
-                                .andExpect(jsonPath("$.status").value(404));
+                                .andExpect(status().isForbidden());
 
                 mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                                 .delete("/api/v1/pago/" + UUID.randomUUID()))
-                                .andExpect(status().isMethodNotAllowed())
-                                .andExpect(jsonPath("$.status").value(405));
+                                .andExpect(status().isForbidden());
         }
 
         @Test

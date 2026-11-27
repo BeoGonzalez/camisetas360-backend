@@ -26,9 +26,14 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import com.camisetas360.pago.security.SecurityConfig;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.test.context.support.WithMockUser;
 
 @WebMvcTest(WebpayController.class)
-@Import({GlobalExceptionHandler.class, WebpayControllerTest.Config.class})
+@Import({GlobalExceptionHandler.class, SecurityConfig.class, WebpayControllerTest.Config.class})
+// Usuario autenticado con todos los permisos de pagos: las reglas en si se prueban en PagoSecurityTest.
+@WithMockUser(authorities = {"ROLE_CUSTOMER", "ROLE_ADMIN", "SCOPE_Checkout.Create", "SCOPE_Orders.Read"})
 class WebpayControllerTest {
 
     private static final String RESULTADO = "https://front.example/pago/resultado";
@@ -44,6 +49,9 @@ class WebpayControllerTest {
 
     @Autowired
     private MockMvc mvc;
+
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
 
     @MockitoBean
     private WebpayPagoService service;
