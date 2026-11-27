@@ -1,6 +1,9 @@
 package com.camisetas360.pago.webpay;
 
+import com.camisetas360.pago.adapter.FraudeWebpayConfig;
+import com.camisetas360.pago.exception.FraudeDetectadoException;
 import com.camisetas360.pago.exception.PagoInvalidoException;
+import com.camisetas360.pago.port.FraudeDetector;
 import com.camisetas360.pago.messaging.PagoEvento;
 import com.camisetas360.pago.messaging.PagoTopicos;
 import com.camisetas360.pago.model.EstadoPago;
@@ -16,6 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,15 +40,18 @@ public class WebpayPagoService {
     private final OutboxService outbox;
     private final WebpayPlusPort webpay;
     private final WebpayProperties properties;
+    private final FraudeDetector fraudeWebpay;
     private final String secretoHash;
 
     public WebpayPagoService(PagoRepository pagos, OutboxService outbox, WebpayPlusPort webpay,
                              WebpayProperties properties,
+                             @Qualifier(FraudeWebpayConfig.BEAN) FraudeDetector fraudeWebpay,
                              @Value("${antifraude.secreto-hash}") String secretoHash) {
         this.pagos = pagos;
         this.outbox = outbox;
         this.webpay = webpay;
         this.properties = properties;
+        this.fraudeWebpay = fraudeWebpay;
         this.secretoHash = secretoHash;
     }
 
@@ -55,8 +62,18 @@ public class WebpayPagoService {
     public record Retorno(boolean aprobado, Optional<Pago> pago) {
     }
 
+    /**
+     * @param usuarioId identidad del usuario autenticado ({@code tid:oid}); el antifraude de Webpay limita
+     *                  las llamadas por usuario, porque aun no hay tarjeta.
+     */
     @Transactional
-    public Inicio iniciar(UUID ordenId, BigDecimal monto) {
+    public Inicio iniciar(String usuarioId, UUID ordenId, BigDecimal monto) {
+        // Antes de crear nada en Transbank ni en la base: una llamada bloqueada no deja rastro.
+        var evaluacion = fraudeWebpay.evaluarTransaccion("webpay-usuario:" + usuarioId, ordenId);
+        if (!evaluacion.permitido()) {
+            throw new FraudeDetectadoException(evaluacion.motivo(), ordenId, null, null, null,
+                    evaluacion.intentosEnVentana(), evaluacion.ventanaSegundos(), evaluacion.segundosParaReintentar());
+        }
         if (pagos.existsByOrdenIdAndEstado(ordenId, EstadoPago.AUTORIZADO)) {
             throw new PagoInvalidoException("La orden " + ordenId + " ya tiene un pago aprobado");
         }

@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.camisetas360.pago.exception.FraudeDetectadoException;
 import com.camisetas360.pago.exception.GlobalExceptionHandler;
 import com.camisetas360.pago.exception.PagoInvalidoException;
 import com.camisetas360.pago.model.Pago;
@@ -37,6 +38,16 @@ import org.springframework.security.test.context.support.WithMockUser;
 class WebpayControllerTest {
 
     private static final String RESULTADO = "https://front.example/pago/resultado";
+    private static final String TID = "11111111-1111-1111-1111-111111111111";
+    private static final String OID = "22222222-2222-2222-2222-222222222222";
+
+    /** Usuario Entra con (tid, oid): el antifraude de Webpay limita por esta identidad. */
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor usuario() {
+        return org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                .jwt(j -> j.claim("tid", TID).claim("oid", OID))
+                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CUSTOMER"),
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("SCOPE_Checkout.Create"));
+    }
 
     @TestConfiguration
     static class Config {
@@ -60,10 +71,10 @@ class WebpayControllerTest {
     void iniciarDevuelveTokenYUrlDeWebpay() throws Exception {
         UUID ordenId = UUID.randomUUID();
         UUID pagoId = UUID.randomUUID();
-        when(service.iniciar(eq(ordenId), any())).thenReturn(new WebpayPagoService.Inicio(
+        when(service.iniciar(eq(TID + ":" + OID), eq(ordenId), any())).thenReturn(new WebpayPagoService.Inicio(
                 pagoId, ordenId, new BigDecimal("15990"), "tok-1", "https://webpay3gint.transbank.cl/webpayserver/initTransaction"));
 
-        mvc.perform(post("/api/v1/pago/webpay/iniciar").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/v1/pago/webpay/iniciar").with(usuario()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ordenId\":\"" + ordenId + "\",\"monto\":15990}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.token").value("tok-1"))
@@ -80,11 +91,25 @@ class WebpayControllerTest {
 
     @Test
     void iniciarOrdenYaPagadaResponde400() throws Exception {
-        when(service.iniciar(any(), any())).thenThrow(new PagoInvalidoException("ya pagada"));
+        when(service.iniciar(any(), any(), any())).thenThrow(new PagoInvalidoException("ya pagada"));
 
-        mvc.perform(post("/api/v1/pago/webpay/iniciar").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/v1/pago/webpay/iniciar").with(usuario()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ordenId\":\"" + UUID.randomUUID() + "\",\"monto\":100}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void iniciarBloqueadoPorAntifraudeResponde429ConRetryAfter() throws Exception {
+        UUID ordenId = UUID.randomUUID();
+        when(service.iniciar(any(), any(), any())).thenThrow(new FraudeDetectadoException(
+                "Bloqueado preventivamente por antifraude", ordenId, null, null, null, 2, 10, 1800));
+
+        mvc.perform(post("/api/v1/pago/webpay/iniciar").with(usuario()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ordenId\":\"" + ordenId + "\",\"monto\":15990}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "1800"))
+                .andExpect(jsonPath("$.codigo").value("BLOQUEADO_FRAUDE"))
+                .andExpect(jsonPath("$.segundosParaReintentar").value(1800));
     }
 
     @Test
