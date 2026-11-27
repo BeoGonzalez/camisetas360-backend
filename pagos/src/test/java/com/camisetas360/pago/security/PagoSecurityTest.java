@@ -96,6 +96,19 @@ class PagoSecurityTest {
                 .andExpect(status().isCreated());
     }
 
+    /**
+     * En produccion el CORS lo resuelve el API Gateway: el servicio no debe rechazar con
+     * "403 Invalid CORS request" una peticion que trae el Origin del frontend publicado.
+     */
+    @Test
+    void sinCorsLocalNoSeRechazaElOriginDelFrontend() throws Exception {
+        when(webpay.iniciar(any(), any())).thenReturn(new WebpayPagoService.Inicio(ID, ID, BigDecimal.TEN, "t", "https://w"));
+        mvc.perform(post("/api/v1/pago/webpay/iniciar").with(token("ROLE_CUSTOMER", "SCOPE_Checkout.Create"))
+                        .header("Origin", "https://frontend.execute-api.us-east-1.amazonaws.com")
+                        .contentType(MediaType.APPLICATION_JSON).content(INICIAR_WEBPAY))
+                .andExpect(status().isCreated());
+    }
+
     @Test
     void pagarExigeRolYScope() throws Exception {
         mvc.perform(post("/api/v1/pago/webpay/iniciar").with(token("ROLE_CUSTOMER"))
